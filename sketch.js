@@ -1,3 +1,6 @@
+
+
+
 let soundBankJSON = null;
 let soundGroups = {};
 let activeAtmos = null;
@@ -22,6 +25,10 @@ let globalEnergy = 0;
 const rightHandSplit = 60; // C4 -> derecha >=60
 
 // --------- Utilities ----------
+function preload() {
+  // cargamos el JSON desde GitHub Pages
+  soundBankJSON = loadJSON("soundbank.json");
+}
 function rng(n) {
   // pseudo random deterministic-ish using seed
   const x = Math.sin((frameCount + 1) * 0.017 + quantumSeed * 0.113) * 10000;
@@ -51,6 +58,65 @@ function setStatus(msg) {
 }
 
 // --------- p5 Setup ----------
+buildSoundBankFromJSON();
+function buildSoundBankFromJSON() {
+  if (!soundBankJSON) {
+    console.warn("No soundbank.json found.");
+    return;
+  }
+
+  // Creamos un grupo por categoría
+  for (let group in soundBankJSON) {
+    soundGroups[group] = [];
+    for (let file of soundBankJSON[group]) {
+      soundGroups[group].push(loadSound(file));
+    }
+  }
+
+  console.log("✅ Sound bank loaded:", Object.keys(soundGroups));
+}
+function startAtmosphereLoop() {
+  if (atmosStarted) return;
+  atmosStarted = true;
+
+  if (!soundGroups.atmos || soundGroups.atmos.length === 0) return;
+
+  playNewAtmosLayer();
+
+  // Cambia de atmósfera cada 22–40s (random)
+  setInterval(() => {
+    playNewAtmosLayer();
+  }, floor(random(22000, 40000)));
+
+  // Brillos ocasionales
+  setInterval(() => {
+    if (random() < 0.6) playOneShot("shimmer", 0.05, 0.16);
+  }, floor(random(7000, 12000)));
+}
+
+function playNewAtmosLayer() {
+  if (!soundGroups.atmos || soundGroups.atmos.length === 0) return;
+
+  // stop anterior
+  if (activeAtmos && activeAtmos.isPlaying()) activeAtmos.stop();
+
+  activeAtmos = random(soundGroups.atmos);
+  if (!activeAtmos) return;
+
+  activeAtmos.setVolume(random(0.04, 0.12));
+  activeAtmos.rate(random(0.85, 1.15));
+  activeAtmos.play();
+}
+
+function playOneShot(groupName, vMin = 0.05, vMax = 0.15) {
+  if (!soundGroups[groupName] || soundGroups[groupName].length === 0) return;
+
+  let s = random(soundGroups[groupName]);
+  s.setVolume(random(vMin, vMax));
+  s.rate(random(0.9, 1.2));
+  s.play();
+}
+
 function setup() {
   createCanvas(windowWidth, windowHeight, WEBGL);
   colorMode(HSB, 360, 100, 100, 1);
@@ -105,6 +171,19 @@ function setupSynth() {
 
   setStatus("✅ Audio ready. Touch MIDI keys.");
 }
+startAtmosphereLoop();
+btn.addEventListener("click", async () => {
+  await userStartAudio();
+  audioReady = true;
+
+  setupSynth();
+  setupMIDI();
+
+  startAtmosphereLoop(); // ✅ atmósfera viva
+
+  started = true;
+  document.getElementById("overlay").style.display = "none";
+});
 
 function setupMIDI() {
   if (!navigator.requestMIDIAccess) {
@@ -318,5 +397,6 @@ function draw() {
   // gentle fade out if no activity
   globalEnergy *= 0.985;
 }
+
 
 
