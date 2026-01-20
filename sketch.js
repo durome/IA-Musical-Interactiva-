@@ -1,6 +1,3 @@
-
-
-
 let soundBankJSON = null;
 let soundGroups = {};
 let activeAtmos = null;
@@ -397,6 +394,7 @@ function draw() {
   // gentle fade out if no activity
   globalEnergy *= 0.985;
 }
+
 
 
 
