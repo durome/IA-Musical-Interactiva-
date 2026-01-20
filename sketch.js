@@ -8,16 +8,12 @@ let soundBankJSON = null;
 let soundGroups = {};
 const VOICES_PER_FILE = 5;
 
-// Nota -> sonido activo
-let noteToVoice = {};  // { note: {sound, group} }
+let noteToVoice = {};           // nota -> sonido activo
+let pointerIdToNote = {};       // pointerId -> nota activa (touch/mouse/pen)
+let pressedKeys = {};           // teclado pc -> activo
 
-// POINTER -> note activo (multi-touch robusto)
-let pointerIdToNote = {}; // { pointerId: note }
-
-let structures = [];
-let globalEnergy = 0;
-
-const rightHandSplit = 60; // C4
+const rightHandSplit = 60;
+const randomNotesPool = [36,38,40,43,45,48,50,52,55,57,60,62,64,67,69,71,72,74,76,79];
 
 // Teclado ordenador -> notas
 const keyboardMap = {
@@ -26,9 +22,15 @@ const keyboardMap = {
   "q": 60, "w": 62, "e": 64, "r": 65, "t": 67, "y": 69, "u": 71,
   "i": 72, "o": 74, "p": 76
 };
-let pressedKeys = {};
 
-const randomNotesPool = [36,38,40,43,45,48,50,52,55,57,60,62,64,67,69,71,72,74,76,79];
+// --------------------
+// VISUAL WORLD (CUBES)
+// --------------------
+let cubes = [];
+let maxCubes = 220;
+
+// luces (sin objeto visible, solo iluminación)
+let lightPhase = 0;
 
 function preload() {
   soundBankJSON = loadJSON("soundbank.json");
@@ -43,32 +45,28 @@ function setup() {
 
   const btn = document.getElementById("startBtn");
   btn.addEventListener("click", async () => {
-    await userStartAudio(); // ✅ desbloquea audio mobile
+    await userStartAudio();
     audioReady = true;
     started = true;
 
     setupMIDI();
-    attachUniversalPointerEvents(); // ✅ LO MÁS IMPORTANTE
+    attachUniversalPointerEvents();
 
     document.getElementById("overlay").style.display = "none";
-    setStatus("✅ Ready: MIDI + Keyboard + Touch/Mouse/Pen");
+    setStatus("✅ Ready: MIDI / Keyboard / Touch / Mouse / Pen");
   });
 }
 
-// -----------------------------
-// STATUS
-// -----------------------------
 function setStatus(msg) {
   const el = document.getElementById("status");
   if (el) el.textContent = msg;
 }
 
-// -----------------------------
-// SOUND LOADING (poly voices)
-// -----------------------------
+// --------------------
+// SOUND SYSTEM (POLY)
+// --------------------
 function loadAllSoundsFromJSON() {
   if (!soundBankJSON) {
-    console.warn("❌ soundbank.json missing.");
     setStatus("❌ soundbank.json missing.");
     return;
   }
@@ -79,15 +77,11 @@ function loadAllSoundsFromJSON() {
   let totalToLoad = 0;
   let loaded = 0;
 
-  for (let g of groups) {
-    totalToLoad += (soundBankJSON[g]?.length || 0) * VOICES_PER_FILE;
-  }
-
+  for (let g of groups) totalToLoad += (soundBankJSON[g]?.length || 0) * VOICES_PER_FILE;
   setStatus(`⏳ Loading sounds... 0 / ${totalToLoad}`);
 
   for (let g of groups) {
     soundGroups[g] = [];
-
     for (let file of soundBankJSON[g]) {
       const fileEntry = { file, voices: [] };
       soundGroups[g].push(fileEntry);
@@ -98,22 +92,17 @@ function loadAllSoundsFromJSON() {
           () => {
             loaded++;
             setStatus(`⏳ Loading sounds... ${loaded} / ${totalToLoad}`);
-            if (loaded >= totalToLoad) {
-              setStatus("✅ Sounds loaded. Press START.");
-            }
+            if (loaded >= totalToLoad) setStatus("✅ Sounds loaded. Press START.");
           },
           () => {
             loaded++;
             setStatus(`⚠️ Missing: ${file} (${loaded}/${totalToLoad})`);
-            if (loaded >= totalToLoad) {
-              setStatus("✅ Loaded (with warnings). Press START.");
-            }
+            if (loaded >= totalToLoad) setStatus("✅ Loaded with warnings. Press START.");
           }
         );
 
         snd.playMode("sustain");
         snd.setVolume(0);
-
         fileEntry.voices.push(snd);
       }
     }
@@ -125,21 +114,29 @@ function getAvailableVoice(groupName) {
   if (!files || files.length === 0) return null;
 
   const fileObj = random(files);
-  if (!fileObj || !fileObj.voices) return null;
+  if (!fileObj?.voices?.length) return null;
 
   for (let v of fileObj.voices) {
     if (!v.isPlaying()) return v;
   }
 
-  // si todo ocupado, recicla una
   const v = random(fileObj.voices);
   if (v && v.isPlaying()) v.stop();
   return v;
 }
 
+function fadeOutAndStop(snd, seconds = 0.08) {
+  if (!snd) return;
+  try {
+    snd.setVolume(0, seconds);
+    setTimeout(() => { try { snd.stop(); } catch(e) {} }, seconds * 1000 + 70);
+  } catch(e) {
+    try { snd.stop(); } catch(e2) {}
+  }
+}
+
 function pickGroupForNote(note) {
   const isRight = note >= rightHandSplit;
-
   if (isRight) {
     if (soundGroups.shimmer && random() < 0.65) return "shimmer";
     return "glass";
@@ -149,37 +146,18 @@ function pickGroupForNote(note) {
   }
 }
 
-function fadeOutAndStop(snd, seconds = 0.08) {
-  if (!snd) return;
-  try {
-    snd.setVolume(0, seconds);
-    setTimeout(() => {
-      try { snd.stop(); } catch (e) {}
-    }, Math.max(10, seconds * 1000 + 60));
-  } catch (e) {
-    try { snd.stop(); } catch (e2) {}
-  }
-}
-
-// -----------------------------
+// --------------------
 // NOTE ON / OFF
-// -----------------------------
+// --------------------
 function onNoteOn(note, vel) {
   if (!audioReady) return;
 
-  // si ya sonaba esa nota, la cortamos
   if (noteToVoice[note]?.sound) {
     fadeOutAndStop(noteToVoice[note].sound, 0.03);
     delete noteToVoice[note];
   }
 
-  globalEnergy = constrain(globalEnergy + vel / 127, 0, 4);
-
-  let group = pickGroupForNote(note);
-  if (!soundGroups[group] || soundGroups[group].length === 0) {
-    group = soundGroups.glass ? "glass" : Object.keys(soundGroups)[0];
-  }
-
+  const group = pickGroupForNote(note);
   const voice = getAvailableVoice(group);
   if (!voice) return;
 
@@ -192,25 +170,106 @@ function onNoteOn(note, vel) {
 
   noteToVoice[note] = { sound: voice, group };
 
-  const shapeType = note >= rightHandSplit ? "crystal" : "foundation";
-  structures.push(new Structure(note, vel, shapeType));
+  // 🔥 aquí construimos cubos con el sonido
+  spawnCubeCluster(note, vel);
 }
 
 function onNoteOff(note) {
-  globalEnergy *= 0.88;
-
   const entry = noteToVoice[note];
   if (entry?.sound) fadeOutAndStop(entry.sound, 0.08);
-
   delete noteToVoice[note];
 }
 
-// -----------------------------
+// --------------------
+// CUBE SYSTEM
+// --------------------
+function spawnCubeCluster(note, vel) {
+  // cluster de cubos aleatorio (más vel => más cubos)
+  const count = floor(map(vel, 1, 127, 2, 18));
+
+  for (let i = 0; i < count; i++) {
+    cubes.push(new CubeShard(note, vel));
+  }
+
+  // limit para que no explote
+  if (cubes.length > maxCubes) {
+    cubes.splice(0, cubes.length - maxCubes);
+  }
+}
+
+class CubeShard {
+  constructor(note, vel) {
+    this.note = note;
+    this.vel = vel;
+
+    this.birth = millis();
+    this.life = map(vel, 0, 127, 1100, 4200);
+
+    // tamaño según nota y velocidad
+    this.size = map(vel, 0, 127, 8, 70) * random(0.55, 1.25);
+
+    // posición 3D expandida
+    this.pos = createVector(
+      random(-480, 480),
+      random(-320, 320),
+      random(-520, 520)
+    );
+
+    // velocidad “constructiva”
+    const drift = map(note, 36, 84, 0.4, 2.1);
+    this.velVec = p5.Vector.random3D().mult(drift);
+
+    // rotación
+    this.spin = createVector(
+      random(-0.03, 0.03),
+      random(-0.03, 0.03),
+      random(-0.03, 0.03)
+    );
+
+    this.hue = (map(note, 21, 108, 180, 360) + vel * 1.4) % 360;
+    this.alpha = 1.0;
+  }
+
+  isDead() {
+    return millis() - this.birth > this.life;
+  }
+
+  update() {
+    const t = (millis() - this.birth) / this.life;
+    this.alpha = 1.0 - t;
+
+    // movimiento como flujo de capital bifurcado
+    this.pos.add(this.velVec);
+
+    // suaviza drift
+    this.velVec.mult(0.985);
+  }
+
+  draw() {
+    push();
+    translate(this.pos.x, this.pos.y, this.pos.z);
+
+    rotateX(frameCount * this.spin.x);
+    rotateY(frameCount * this.spin.y);
+    rotateZ(frameCount * this.spin.z);
+
+    // vidrio cromático
+    ambientMaterial(this.hue, 55, 90, this.alpha * 0.85);
+    specularMaterial(this.hue, 65, 100, this.alpha);
+    shininess(140);
+
+    box(this.size, this.size * random(0.4, 1.1), this.size * random(0.4, 1.1));
+
+    pop();
+  }
+}
+
+// --------------------
 // MIDI
-// -----------------------------
+// --------------------
 function setupMIDI() {
   if (!navigator.requestMIDIAccess) {
-    setStatus("⚠️ No WebMIDI. Touch/keyboard enabled.");
+    setStatus("⚠️ No WebMIDI. Keyboard/Touch enabled.");
     return;
   }
 
@@ -222,7 +281,7 @@ function setupMIDI() {
       midiReady = true;
       setStatus("✅ MIDI connected.");
     },
-    () => setStatus("⚠️ MIDI failed. Touch/keyboard enabled.")
+    () => setStatus("⚠️ MIDI failed. Keyboard/Touch enabled.")
   );
 }
 
@@ -235,9 +294,9 @@ function handleMIDI(msg) {
   if (isNoteOff) onNoteOff(note);
 }
 
-// -----------------------------
-// KEYBOARD (PC)
-// -----------------------------
+// --------------------
+// Keyboard
+// --------------------
 function keyPressed() {
   if (!audioReady) return;
   const k = key.toLowerCase();
@@ -257,27 +316,19 @@ function keyReleased() {
   onNoteOff(keyboardMap[k]);
 }
 
-// -----------------------------
-// ✅ UNIVERSAL POINTER EVENTS (Android FIX)
-// -----------------------------
+// --------------------
+// Pointer events universal (touch/mouse/pen)
+// --------------------
 function attachUniversalPointerEvents() {
-  // El canvas real de p5:
   const c = document.querySelector("canvas");
-  if (!c) {
-    console.warn("⚠️ canvas not found for pointer events.");
-    return;
-  }
+  if (!c) return;
 
-  // Desactiva gestos del navegador (zoom/scroll) sobre el canvas
   c.style.touchAction = "none";
 
   c.addEventListener("pointerdown", (e) => {
     if (!audioReady) return;
-
-    // capturamos pointer para que siempre lleguen up/cancel
     try { c.setPointerCapture(e.pointerId); } catch (_) {}
 
-    // nota aleatoria
     const note = random(randomNotesPool);
     const vel = floor(random(70, 120));
 
@@ -300,136 +351,85 @@ function attachUniversalPointerEvents() {
       delete pointerIdToNote[e.pointerId];
     }
   }, { passive: false });
-
-  setStatus("✅ Pointer events enabled (touch/mouse/pen).");
 }
 
-// -----------------------------
-// VISUALS
-// -----------------------------
-class Structure {
-  constructor(note, vel, type) {
-    this.note = note;
-    this.vel = vel;
-    this.type = type;
-
-    this.birth = millis();
-    this.life = map(vel, 0, 127, 1200, 3600);
-
-    this.size = map(vel, 0, 127, 18, 140);
-
-    this.pos = createVector(
-      random(-360, 360),
-      random(-260, 260),
-      random(-400, 400)
-    );
-
-    this.spin = createVector(
-      random(-0.03, 0.03),
-      random(-0.03, 0.03),
-      random(-0.03, 0.03)
-    );
-
-    this.hue = (map(note, 21, 108, 210, 360) + vel * 2.2) % 360;
-    this.alpha = 1.0;
-
-    const pick = (note + vel) % 3;
-    this.geom = pick === 0 ? "sphere" : pick === 1 ? "box" : "tetra";
-  }
-
-  isDead() {
-    return millis() - this.birth > this.life;
-  }
-
-  update() {
-    const t = (millis() - this.birth) / this.life;
-    this.alpha = 1.0 - t;
-
-    this.pos.x += sin(frameCount * 0.01 + this.note * 0.03) * 0.6;
-    this.pos.y += cos(frameCount * 0.012 + this.note * 0.02) * 0.6;
-    this.pos.z += sin(frameCount * 0.008 + this.note * 0.04) * 0.6;
-  }
-
-  draw() {
-    push();
-    translate(this.pos.x, this.pos.y, this.pos.z);
-
-    rotateX(frameCount * this.spin.x);
-    rotateY(frameCount * this.spin.y);
-    rotateZ(frameCount * this.spin.z);
-
-    ambientMaterial(this.hue, 45, 92, this.alpha * 0.9);
-    specularMaterial(this.hue, 55, 100, this.alpha);
-    shininess(90);
-
-    const s = this.size * (0.55 + this.alpha * 0.7);
-
-    if (this.geom === "sphere") sphere(s * 0.75, 18, 12);
-    else if (this.geom === "box") box(s, s * 0.6, s * 0.8);
-    else drawTetra(s * 0.9);
-
-    pop();
-  }
-}
-
-function drawTetra(sz) {
-  beginShape(TRIANGLES);
-  const v0 = createVector(0, -sz, 0);
-  const v1 = createVector(-sz, sz, -sz);
-  const v2 = createVector(sz, sz, -sz);
-  const v3 = createVector(0, sz, sz);
-
-  vertex(v0.x, v0.y, v0.z); vertex(v1.x, v1.y, v1.z); vertex(v2.x, v2.y, v2.z);
-  vertex(v0.x, v0.y, v0.z); vertex(v2.x, v2.y, v2.z); vertex(v3.x, v3.y, v3.z);
-  vertex(v0.x, v0.y, v0.z); vertex(v3.x, v3.y, v3.z); vertex(v1.x, v1.y, v1.z);
-  vertex(v1.x, v1.y, v1.z); vertex(v3.x, v3.y, v3.z); vertex(v2.x, v2.y, v2.z);
-
-  endShape();
-}
-
-// -----------------------------
-// DRAW
-// -----------------------------
+// --------------------
+// DRAW: luces direccionales coloreadas (invisibles)
+// --------------------
 function draw() {
-  background(0, 0.14);
+  background(0, 0.16);
 
-  ambientLight(30);
-  directionalLight(255, 255, 255, -0.4, -0.6, -1);
-  pointLight(120, 160, 255, 0, 0, 300);
+  // movimiento continuo de luz
+  lightPhase += 0.007;
+
+  // base
+  ambientLight(18);
+
+  // focos direccionales invisibles (solo luz)
+  // 1 azul-violeta
+  directionalLight(
+    80 + 60 * sin(lightPhase),
+    120,
+    255,
+    -0.6, -0.3, -1
+  );
+
+  // 2 magenta
+  directionalLight(
+    255,
+    80 + 80 * sin(lightPhase * 1.3),
+    180,
+    0.7, 0.4, -1
+  );
+
+  // 3 verde / lima
+  directionalLight(
+    140,
+    255,
+    120 + 50 * sin(lightPhase * 0.9),
+    0.2, -0.8, -1
+  );
+
+  // 4 foco cálido (como oro)
+  pointLight(
+    255,
+    210,
+    120,
+    0,
+    0,
+    420
+  );
 
   rotateY(frameCount * 0.0012);
-  rotateX(Math.sin(frameCount * 0.001) * 0.12);
+  rotateX(sin(frameCount * 0.001) * 0.12);
 
-  const energyPulse = constrain(globalEnergy, 0, 2);
-  const coreSize = 60 + energyPulse * 160;
-
+  // núcleo (como campo energético)
   push();
-  fill(220, 30, 40, 0.45);
-  sphere(coreSize * 0.12);
+  fill(220, 35, 35, 0.35);
+  sphere(24 + sin(frameCount * 0.02) * 4);
   pop();
 
-  for (let s of structures) {
-    s.update();
-    s.draw();
+  // actualizar / dibujar cubos
+  for (let c of cubes) {
+    c.update();
+    c.draw();
   }
-  structures = structures.filter((s) => !s.isDead());
 
-  globalEnergy *= 0.985;
+  cubes = cubes.filter((c) => !c.isDead());
 
-  // HUD
+  // HUD minimal
   push();
   resetMatrix();
   fill(255);
   textAlign(LEFT, TOP);
   textSize(12);
-  text("✅ Universal input: MIDI / Keyboard / Touch / Mouse / Pen", 14, 14);
-  text("Touch Android fixed via Pointer Events", 14, 32);
+  text("CUBES FIELD · MIDI / Keyboard / Touch / Mouse", 14, 14);
+  text("Hold input = sound | Release = stop", 14, 32);
   pop();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
-
 
 
