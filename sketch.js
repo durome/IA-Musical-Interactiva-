@@ -10,7 +10,7 @@ let soundGroups = {};
 let activeAtmos = null;
 let atmosStarted = false;
 
-// 🎹 Cada tecla MIDI tendrá su propio sonido asociado
+// Cada nota controla su sonido activo
 let noteToSound = {}; // { 60: p5.SoundFile, 61: p5.SoundFile, ... }
 let noteToGroup = {}; // { 60: "atmos", ... }
 
@@ -20,16 +20,40 @@ let globalEnergy = 0;
 
 const rightHandSplit = 60; // C4
 
-// ------------------------------
+// ------------------------------------
+// 🎹 Keyboard mapping (PC keyboard -> MIDI notes)
+// ------------------------------------
+const keyboardMap = {
+  "a": 48, "s": 50, "d": 52, "f": 53, "g": 55, "h": 57, "j": 59,
+  "k": 60, "l": 62, "ñ": 64,
+  "q": 60, "w": 62, "e": 64, "r": 65, "t": 67, "y": 69, "u": 71,
+  "i": 72, "o": 74, "p": 76
+};
+
+// Evitar repetir NoteOn si tecla queda pulsada
+let pressedKeys = {}; // { "a": true, ... }
+
+// ------------------------------------
+// 🎲 Random playing pool (for mouse/touch)
+// ------------------------------------
+const randomNotesPool = [
+  36, 38, 40, 43, 45, 48, 50, 52, 55, 57,
+  60, 62, 64, 67, 69, 71, 72, 74, 76, 79
+];
+
+// Nota activada por interacción "mouse/touch"
+let mouseTouchActiveNote = null;
+
+// ------------------------------------
 // PRELOAD
-// ------------------------------
+// ------------------------------------
 function preload() {
   soundBankJSON = loadJSON("soundbank.json");
 }
 
-// ------------------------------
+// ------------------------------------
 // BUILD SOUND BANK
-// ------------------------------
+// ------------------------------------
 function buildSoundBankFromJSON() {
   if (!soundBankJSON) {
     console.warn("❌ soundbank.json not loaded.");
@@ -46,9 +70,9 @@ function buildSoundBankFromJSON() {
   console.log("✅ Sound bank ready:", Object.keys(soundGroups));
 }
 
-// ------------------------------
-// START ATMOSPHERE LOOP (optional background)
-// ------------------------------
+// ------------------------------------
+// Atmosphere loop (fondo opcional)
+// ------------------------------------
 function startAtmosphereLoop() {
   if (atmosStarted) return;
   atmosStarted = true;
@@ -57,12 +81,10 @@ function startAtmosphereLoop() {
 
   playNewAtmosLayer();
 
-  // Cambios de atmósfera cada 22–40s
   setInterval(() => {
     playNewAtmosLayer();
   }, floor(random(22000, 40000)));
 
-  // Brillos ocasionales
   setInterval(() => {
     if (random() < 0.6) playOneShot("shimmer", 0.05, 0.16);
   }, floor(random(7000, 12000)));
@@ -90,17 +112,17 @@ function playOneShot(groupName, vMin = 0.05, vMax = 0.15) {
   s.play();
 }
 
-// ------------------------------
-// UI STATUS
-// ------------------------------
+// ------------------------------------
+// UI Status
+// ------------------------------------
 function setStatus(msg) {
   const el = document.getElementById("status");
   if (el) el.textContent = msg;
 }
 
-// ------------------------------
+// ------------------------------------
 // SETUP
-// ------------------------------
+// ------------------------------------
 function setup() {
   createCanvas(windowWidth, windowHeight, WEBGL);
   colorMode(HSB, 360, 100, 100, 1);
@@ -112,7 +134,7 @@ function setup() {
   const btn = document.getElementById("startBtn");
 
   btn.addEventListener("click", async () => {
-    await userStartAudio(); // ✅ obligatorio en navegador
+    await userStartAudio();
     audioReady = true;
 
     setupMIDI();
@@ -120,16 +142,16 @@ function setup() {
 
     started = true;
     document.getElementById("overlay").style.display = "none";
-    setStatus("✅ Audio ready + MIDI waiting...");
+    setStatus("✅ Ready. MIDI / Keyboard / Mouse / Touch enabled.");
   });
 }
 
-// ------------------------------
+// ------------------------------------
 // MIDI SETUP
-// ------------------------------
+// ------------------------------------
 function setupMIDI() {
   if (!navigator.requestMIDIAccess) {
-    setStatus("❌ WebMIDI not supported. Use Chrome / Edge.");
+    setStatus("⚠️ MIDI not available. Keyboard / Mouse / Touch enabled.");
     return;
   }
 
@@ -140,15 +162,15 @@ function setupMIDI() {
       inputs.forEach((input) => (input.onmidimessage = handleMIDI));
 
       midiReady = true;
-      setStatus("✅ MIDI connected. Play your piano.");
+      setStatus("✅ MIDI connected. Play piano / keyboard / mouse / touch.");
     },
-    () => setStatus("❌ MIDI access failed.")
+    () => setStatus("⚠️ MIDI failed. Keyboard / Mouse / Touch enabled.")
   );
 }
 
-// ------------------------------
+// ------------------------------------
 // MIDI HANDLER
-// ------------------------------
+// ------------------------------------
 function handleMIDI(msg) {
   if (!audioReady) return;
 
@@ -161,17 +183,95 @@ function handleMIDI(msg) {
   if (isNoteOff) onNoteOff(note);
 }
 
-// ------------------------------
+// ------------------------------------
+// KEYBOARD HANDLER
+// ------------------------------------
+function keyPressed() {
+  if (!audioReady) return;
+
+  const k = key.toLowerCase();
+  if (!(k in keyboardMap)) return;
+  if (pressedKeys[k]) return;
+
+  pressedKeys[k] = true;
+
+  const note = keyboardMap[k];
+  const vel = 90;
+
+  onNoteOn(note, vel);
+}
+
+function keyReleased() {
+  if (!audioReady) return;
+
+  const k = key.toLowerCase();
+  if (!(k in keyboardMap)) return;
+
+  pressedKeys[k] = false;
+
+  const note = keyboardMap[k];
+  onNoteOff(note);
+}
+
+// ------------------------------------
+// 🖱️ MOUSE + 📱 TOUCH INPUT
+// ------------------------------------
+function mousePressed() {
+  if (!audioReady) return;
+  if (mouseTouchActiveNote !== null) return;
+
+  let note = random(randomNotesPool);
+  let vel = floor(random(60, 120));
+
+  mouseTouchActiveNote = note;
+  onNoteOn(note, vel);
+}
+
+function mouseReleased() {
+  if (!audioReady) return;
+  if (mouseTouchActiveNote === null) return;
+
+  onNoteOff(mouseTouchActiveNote);
+  mouseTouchActiveNote = null;
+}
+
+// En móviles: touchStarted dispara sonido
+function touchStarted() {
+  if (!audioReady) return;
+
+  // si no se ha pulsado el botón Start, no hacemos nada
+  if (!started) return false;
+
+  if (mouseTouchActiveNote !== null) return false;
+
+  let note = random(randomNotesPool);
+  let vel = floor(random(60, 120));
+
+  mouseTouchActiveNote = note;
+  onNoteOn(note, vel);
+
+  return false;
+}
+
+function touchEnded() {
+  if (!audioReady) return false;
+
+  if (mouseTouchActiveNote === null) return false;
+
+  onNoteOff(mouseTouchActiveNote);
+  mouseTouchActiveNote = null;
+
+  return false;
+}
+
+// ------------------------------------
 // NOTE ON
-// ------------------------------
+// ------------------------------------
 function onNoteOn(note, vel) {
   globalEnergy = constrain(globalEnergy + vel / 127, 0, 4);
 
   const isRight = note >= rightHandSplit;
 
-  // 🎼 Elegimos grupo según mano
-  // derecha → shimmer + glass brillante
-  // izquierda → atmos + glass grave
   let groupChoice;
   if (isRight) {
     groupChoice = random() < 0.65 ? "shimmer" : "glass";
@@ -179,67 +279,55 @@ function onNoteOn(note, vel) {
     groupChoice = random() < 0.7 ? "atmos" : "glass";
   }
 
-  // Si el grupo no existe, fallback
   if (!soundGroups[groupChoice] || soundGroups[groupChoice].length === 0) {
     groupChoice = "glass";
   }
   if (!soundGroups[groupChoice] || soundGroups[groupChoice].length === 0) return;
 
-  // Si esa nota ya tenía sonido, lo cortamos (para evitar doble loop)
+  // Si ya sonaba la misma nota, cortamos antes
   if (noteToSound[note] && noteToSound[note].isPlaying()) {
     noteToSound[note].stop();
   }
 
-  // Seleccionamos sample aleatorio de ese grupo
   let s = random(soundGroups[groupChoice]);
   if (!s) return;
 
   noteToSound[note] = s;
   noteToGroup[note] = groupChoice;
 
-  // Volumen por velocidad
   const amp = map(vel, 1, 127, 0.06, 0.22);
-
-  // Pitch del sample siguiendo la nota (sube/baja rate)
-  // 60(C4) → rate 1.0
   const rate = constrain(map(note, 36, 96, 0.6, 1.5), 0.45, 1.8);
 
   s.setVolume(amp);
   s.rate(rate);
 
-  // 🔥 IMPORTANTE:
-  // loop solo para "atmos", los otros solo golpe
+  // Atmos loop, los demás one-shot
   if (groupChoice === "atmos") {
     s.loop();
   } else {
     s.play();
   }
 
-  // Visual structure
   const shapeType = isRight ? "crystal" : "foundation";
   structures.push(new Structure(note, vel, shapeType));
 }
 
-// ------------------------------
-// NOTE OFF  ✅ AQUÍ ESTÁ LA CLAVE
-// ------------------------------
+// ------------------------------------
+// NOTE OFF (STOP al soltar)
+// ------------------------------------
 function onNoteOff(note) {
   globalEnergy *= 0.85;
 
-  // ✅ detener el sonido asociado a ESA tecla
   if (noteToSound[note]) {
-    // stop directo (corte seco)
     noteToSound[note].stop();
-
-    // limpiar
     delete noteToSound[note];
     delete noteToGroup[note];
   }
 }
 
-// ------------------------------
+// ------------------------------------
 // VISUAL CLASS
-// ------------------------------
+// ------------------------------------
 class Structure {
   constructor(note, vel, type) {
     this.note = note;
@@ -247,9 +335,9 @@ class Structure {
     this.type = type;
 
     this.birth = millis();
-    this.life = map(vel, 0, 127, 700, 2600);
+    this.life = map(vel, 0, 127, 900, 3000);
 
-    this.size = map(vel, 0, 127, 16, 110);
+    this.size = map(vel, 0, 127, 18, 120);
 
     this.pos = createVector(
       random(-320, 320),
@@ -321,9 +409,9 @@ function drawTetra(sz) {
   endShape();
 }
 
-// ------------------------------
+// ------------------------------------
 // DRAW LOOP
-// ------------------------------
+// ------------------------------------
 function draw() {
   background(0, 0.14);
 
@@ -350,6 +438,18 @@ function draw() {
   structures = structures.filter((s) => !s.isDead());
 
   globalEnergy *= 0.985;
+
+  // HUD text simple
+  push();
+  resetMatrix();
+  fill(255);
+  textAlign(LEFT, TOP);
+  textSize(12);
+  text("🎹 MIDI / Keyboard / Mouse / Touch enabled", 14, 14);
+  text("Keys: A S D F G H J K / Q W E R T Y U I O P", 14, 32);
+  text("Mouse: click-hold to play, release to stop", 14, 50);
+  text("Touch: press to play, release to stop", 14, 68);
+  pop();
 }
 
 function windowResized() {
