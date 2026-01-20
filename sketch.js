@@ -1,4 +1,4 @@
-let quantumSeed = 85;
+let quantumSeed = 137;
 let seedBinary = "01010101";
 
 let midiAccess;
@@ -312,3 +312,4 @@ function draw() {
   // gentle fade out if no activity
   globalEnergy *= 0.985;
 }
+
