@@ -1,3 +1,9 @@
+let soundBankJSON = null;
+let soundGroups = {};
+let activeAtmos = null;
+let atmosStarted = false;
+
+
 let quantumSeed = 137;
 let seedBinary = "01010101";
 
@@ -312,4 +318,5 @@ function draw() {
   // gentle fade out if no activity
   globalEnergy *= 0.985;
 }
+
 
