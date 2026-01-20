@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>AI Musical System — Eduardo Romaguera (2026)</title>
+  <meta name="description" content="An interactive generative sound & 3D structure system driven by MIDI gestures and quantum seed variation. By Eduardo Romaguera.">
+  <meta name="author" content="Eduardo Romaguera">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+      font-family: Helvetica, Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    /* UI overlay */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #panel {
+      pointer-events: auto;
+      max-width: 720px;
+      padding: 22px 26px;
+      border-radius: 18px;
+      background: rgba(0,0,0,0.62);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.92);
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      backdrop-filter: blur(10px);
+    }
+
+    #panel h1 {
+      font-weight: 500;
+      font-size: 18px;
+      margin: 0 0 8px 0;
+      letter-spacing: 0.2px;
+    }
+
+    #panel p {
+      margin: 0 0 12px 0;
+      font-size: 13px;
+      line-height: 1.5;
+      opacity: 0.85;
+    }
+
+    #status {
+      font-size: 12px;
+      opacity: 0.85;
+      margin-top: 10px;
+    }
+
+    #startBtn {
+      cursor: pointer;
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.92);
+      font-size: 12px;
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+
+    #startBtn:hover { transform: translateY(-1px); background: rgba(255,255,255,0.12); }
+
+    /* Signature */
+    footer {
+      position: fixed;
+      bottom: 12px;
+      right: 18px;
+      color: rgba(255,255,255,0.68);
+      font-size: 12px;
+      letter-spacing: 0.3px;
+      z-index: 20;
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/addons/p5.sound.min.js"></script>
+</head>
+
+<body>
+  <div id="overlay">
+    <div id="panel">
+      <h1>AI Musical System — Quantum + MIDI</h1>
+      <p>
+        A generative 3D sound sculpture driven by your piano gestures.
+        The system mutates through a quantum seed stored in <b>quantum_seed.json</b>.
+        <br><br>
+        <b>Touch the piano</b> to awaken the structure.
+      </p>
+
+      <button id="startBtn">Activate Audio + MIDI</button>
+      <div id="status">Waiting…</div>
+    </div>
+  </div>
+
+  <footer>
+    © Eduardo Romaguera · “AI Musical System” · 2026
+  </footer>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
