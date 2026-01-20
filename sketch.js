@@ -1,8 +1,7 @@
 // =====================================================
-// DUROME · SURPRISE ENGINE FIELD
-// Eduardo Romaguera · Generative System v1.0
+// DUROME · SURPRISE ENGINE FIELD 2.0
+// Eduardo Romaguera · Cubes + Particles (Clusters + Membranes)
 // MIDI + Keyboard + Touch + Mouse + External Signals
-// Cubes + Fast Particles + Random Worlds per Interaction
 // =====================================================
 
 // -------------------- AUDIO & INPUT --------------------
@@ -16,16 +15,13 @@ let soundBankJSON = null;
 let soundGroups = {};
 const VOICES_PER_FILE = 4;
 
-let noteToVoice = {};      // note -> active sound
-let pointerIdToNote = {};  // pointerId -> note
-let pressedKeys = {};      // key -> bool
+let noteToVoice = {};
+let pointerIdToNote = {};
+let pressedKeys = {};
 
 const rightHandSplit = 60;
-
-// Notes pool for pointer interaction
 const randomNotesPool = [36,38,40,43,45,48,50,52,55,57,60,62,64,67,69,71,72,74,76,79];
 
-// Keyboard map -> notes
 const keyboardMap = {
   "a": 48, "s": 50, "d": 52, "f": 53, "g": 55, "h": 57, "j": 59,
   "k": 60, "l": 62,
@@ -49,24 +45,40 @@ let world = {
 // -------------------- VISUAL OBJECTS --------------------
 let cubes = [];
 let particles = [];
-let connectors = []; // optional lines network
+let connectors = [];
 
-let maxCubes = 220;
-let maxParticles = 8000;
-let maxConnectors = 120;
+let maxCubes = 240;
+let maxParticles = 12000;
+let maxConnectors = 160;
 
-// Global lighting
 let lightPhase = 0;
-
-// Global camera / world mood
 let globalSpin = 0;
 
-// Surprise system selection
+let interactionCount = 0;
+
+// -------------------- SURPRISE MODES --------------------
 let activeWorldMode = "nebula";
 let activeWorldUntil = 0;
 
-// History of interactions (for structure)
-let interactionCount = 0;
+const worldModes = [
+  "nebula",
+  "architecture",
+  "synaptic",
+  "orbital_ring",
+  "spiral_city",
+  "storm_field",
+  "crystal_bloom",
+  "gravity_well",
+  "meteor_burst",
+
+  // NEW: emergent build modes
+  "clusters",
+  "membrane"
+];
+
+// -------------------- ATTRACTORS (for clusters/membranes) --------------------
+let attractors = []; // list of vectors
+let attractorLife = 0;
 
 // =====================================================
 // PRELOAD
@@ -85,15 +97,14 @@ function setup() {
 
   loadAllSoundsFromJSON();
 
-  // External patterns
   fetchWeather();
   fetchISS();
   setInterval(fetchWeather, 120000);
   setInterval(fetchISS, 15000);
 
-  // Seed base ambience: minimal particles so we always see something
-  for (let i = 0; i < 1200; i++) {
-    particles.push(new FastParticle(null, 60, "drift", "nebula"));
+  // Always visible base field
+  for (let i = 0; i < 1400; i++) {
+    particles.push(new SmartParticle(null, 60, "drift", "nebula", null));
   }
 
   // Start button
@@ -107,7 +118,7 @@ function setup() {
     attachUniversalPointerEvents();
 
     document.getElementById("overlay").style.display = "none";
-    setStatus("✅ Ready. Play (MIDI / keyboard / touch). Surprise Engine active.");
+    setStatus("✅ Ready. Play (MIDI / keyboard / touch). Forms now BUILD.");
   });
 }
 
@@ -133,9 +144,7 @@ async function fetchWeather() {
     world.humidity = c.relative_humidity_2m ?? world.humidity;
     world.isDay = c.is_day ?? world.isDay;
     world.cloud = c.cloud_cover ?? world.cloud;
-  } catch (e) {
-    // silent
-  }
+  } catch (e) {}
 }
 
 async function fetchISS() {
@@ -147,13 +156,11 @@ async function fetchISS() {
     world.issLat = data.latitude ?? world.issLat;
     world.issLon = data.longitude ?? world.issLon;
     world.issVel = data.velocity ?? world.issVel;
-  } catch (e) {
-    // silent
-  }
+  } catch (e) {}
 }
 
 // =====================================================
-// SOUND LOADER (POLY)
+// SOUND LOADER
 // =====================================================
 function loadAllSoundsFromJSON() {
   if (!soundBankJSON) {
@@ -209,8 +216,6 @@ function fadeOutAndStop(snd, seconds = 0.08) {
 
 function pickGroupForNote(note) {
   const isRight = note >= rightHandSplit;
-
-  // external influences
   const humidityBias = constrain(map(world.humidity, 0, 100, 0, 1), 0, 1);
   const issEnergy = constrain(map(world.issVel, 7600, 7800, 0, 1), 0, 1);
 
@@ -224,41 +229,26 @@ function pickGroupForNote(note) {
 }
 
 // =====================================================
-// SURPRISE ENGINE (WORLD MODES)
+// SURPRISE ENGINE
 // =====================================================
-const worldModes = [
-  "nebula",
-  "architecture",
-  "synaptic",
-  "orbital_ring",
-  "spiral_city",
-  "storm_field",
-  "crystal_bloom",
-  "gravity_well",
-  "meteor_burst"
-];
-
 function chooseNewWorldMode(note, vel) {
-  // Weighted randomness based on world conditions
   const w = world.wind;
   const h = world.humidity;
   const t = world.temperature;
 
   let pool = [];
 
-  // base pool always
   pool.push("nebula", "architecture", "synaptic", "crystal_bloom");
+  pool.push("clusters", "membrane");
 
   if (w > 12) pool.push("storm_field", "meteor_burst");
-  if (h > 65) pool.push("nebula", "gravity_well");
+  if (h > 65) pool.push("nebula", "gravity_well", "membrane");
   if (t < 10) pool.push("orbital_ring");
   if (t > 28) pool.push("spiral_city", "meteor_burst");
 
-  // pitch effect
-  if (note >= 72) pool.push("crystal_bloom", "orbital_ring");
-  if (note <= 45) pool.push("gravity_well", "storm_field");
+  if (note >= 72) pool.push("crystal_bloom", "orbital_ring", "clusters");
+  if (note <= 45) pool.push("gravity_well", "storm_field", "membrane");
 
-  // surprise factor
   pool.push(random(worldModes));
 
   return random(pool);
@@ -277,17 +267,17 @@ function onNoteOn(note, vel) {
 
   interactionCount++;
 
-  // surprise world change
+  // new world
   const newMode = chooseNewWorldMode(note, vel);
   setWorldMode(newMode, floor(random(6500, 12000)));
 
-  // stop existing same note sound
+  // stop same note if exists
   if (noteToVoice[note]?.sound) {
     fadeOutAndStop(noteToVoice[note].sound, 0.03);
     delete noteToVoice[note];
   }
 
-  // play a voice
+  // play sound
   const group = pickGroupForNote(note);
   const voice = getAvailableVoice(group);
   if (!voice) return;
@@ -304,8 +294,13 @@ function onNoteOn(note, vel) {
 
   noteToVoice[note] = { sound: voice, group };
 
-  // spawn visual system based on active world mode
+  // spawn
   spawnSurpriseSystem(note, vel, activeWorldMode);
+
+  // NEW: when entering cluster/membrane, generate attractors
+  if (activeWorldMode === "clusters" || activeWorldMode === "membrane") {
+    generateAttractors(note, vel);
+  }
 }
 
 function onNoteOff(note) {
@@ -315,44 +310,8 @@ function onNoteOff(note) {
 }
 
 // =====================================================
-// SPAWN SYSTEMS (mix cubes + particles + forms)
+// ATTRACTORS
 // =====================================================
-function spawnSurpriseSystem(note, vel, mode) {
-  const cubeCount = floor(map(vel, 1, 127, 1, 10));
-  const particleCount = floor(map(vel, 1, 127, 120, 520));
-
-  // Anchor based on ISS
-  const anchor = issAnchorPoint();
-
-  if (mode === "nebula") {
-    spawnNebula(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "architecture") {
-    spawnArchitecture(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "synaptic") {
-    spawnSynaptic(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "orbital_ring") {
-    spawnOrbitalRing(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "spiral_city") {
-    spawnSpiralCity(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "storm_field") {
-    spawnStormField(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "crystal_bloom") {
-    spawnCrystalBloom(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "gravity_well") {
-    spawnGravityWell(anchor, note, vel, cubeCount, particleCount);
-  } else if (mode === "meteor_burst") {
-    spawnMeteorBurst(anchor, note, vel, cubeCount, particleCount);
-  } else {
-    // fallback
-    spawnNebula(anchor, note, vel, cubeCount, particleCount);
-  }
-
-  // trimming
-  if (cubes.length > maxCubes) cubes.splice(0, cubes.length - maxCubes);
-  if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
-  if (connectors.length > maxConnectors) connectors.splice(0, connectors.length - maxConnectors);
-}
-
 function issAnchorPoint() {
   const x = map(world.issLon, -180, 180, -260, 260);
   const y = map(world.issLat, -90, 90, -170, 170);
@@ -360,31 +319,78 @@ function issAnchorPoint() {
   return createVector(x, y, z);
 }
 
-// ---------------- SYSTEM 1: NEBULA ----------------
+function generateAttractors(note, vel) {
+  attractors = [];
+  attractorLife = millis() + floor(random(7000, 13000));
+
+  const anchor = issAnchorPoint();
+  const count = floor(map(vel, 1, 127, 3, 9));
+
+  for (let i = 0; i < count; i++) {
+    const p = anchor.copy().add(p5.Vector.random3D().mult(random(80, 320)));
+    attractors.push(p);
+  }
+
+  // also connect them visually
+  for (let i = 0; i < attractors.length - 1; i++) {
+    if (random() < 0.7) connectors.push(new Connector(attractors[i], attractors[i + 1], note, vel));
+  }
+}
+
+// =====================================================
+// SPAWN SYSTEMS
+// =====================================================
+function spawnSurpriseSystem(note, vel, mode) {
+  const cubeCount = floor(map(vel, 1, 127, 1, 10));
+  const particleCount = floor(map(vel, 1, 127, 140, 650));
+
+  const anchor = issAnchorPoint();
+
+  if (mode === "clusters") {
+    spawnClusters(anchor, note, vel, cubeCount, particleCount);
+  } else if (mode === "membrane") {
+    spawnMembrane(anchor, note, vel, cubeCount, particleCount);
+  } else {
+    // keep your previous “surprise worlds”
+    // (minimal set here, but still rich)
+    if (mode === "architecture") spawnArchitecture(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "synaptic") spawnSynaptic(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "orbital_ring") spawnOrbitalRing(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "storm_field") spawnStormField(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "crystal_bloom") spawnCrystalBloom(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "gravity_well") spawnGravityWell(anchor, note, vel, cubeCount, particleCount);
+    else if (mode === "meteor_burst") spawnMeteorBurst(anchor, note, vel, cubeCount, particleCount);
+    else spawnNebula(anchor, note, vel, cubeCount, particleCount);
+  }
+
+  if (cubes.length > maxCubes) cubes.splice(0, cubes.length - maxCubes);
+  if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
+  if (connectors.length > maxConnectors) connectors.splice(0, connectors.length - maxConnectors);
+}
+
+// ---------------- BASE SYSTEMS ----------------
 function spawnNebula(anchor, note, vel, cubeCount, particleCount) {
   for (let i = 0; i < particleCount; i++) {
-    particles.push(new FastParticle(note, vel, "drift", "nebula", anchor));
+    particles.push(new SmartParticle(note, vel, "drift", "nebula", anchor));
   }
   for (let i = 0; i < floor(cubeCount * 0.35); i++) {
     cubes.push(new CubeShard(note, vel, "drift", "nebula", anchor));
   }
 }
 
-// ---------------- SYSTEM 2: ARCHITECTURE ----------------
 function spawnArchitecture(anchor, note, vel, cubeCount, particleCount) {
   for (let i = 0; i < cubeCount * 2; i++) {
     cubes.push(new CubeShard(note, vel, "foundation", "architecture", anchor));
   }
-  for (let i = 0; i < floor(particleCount * 0.4); i++) {
-    particles.push(new FastParticle(note, vel, "drift", "architecture", anchor));
+  for (let i = 0; i < floor(particleCount * 0.3); i++) {
+    particles.push(new SmartParticle(note, vel, "drift", "architecture", anchor));
   }
 }
 
-// ---------------- SYSTEM 3: SYNAPTIC ----------------
 function spawnSynaptic(anchor, note, vel, cubeCount, particleCount) {
-  // particles + connection lines
   const points = [];
-  const n = floor(map(vel, 1, 127, 8, 22));
+  const n = floor(map(vel, 1, 127, 10, 26));
+
   for (let i = 0; i < n; i++) {
     const p = createVector(
       anchor.x + random(-240, 240),
@@ -392,24 +398,21 @@ function spawnSynaptic(anchor, note, vel, cubeCount, particleCount) {
       anchor.z + random(-220, 220)
     );
     points.push(p);
-    particles.push(new FastParticle(note, vel, "synapse", "synaptic", p));
+    particles.push(new SmartParticle(note, vel, "synapse", "synaptic", p));
   }
 
-  // connectors
   for (let i = 0; i < points.length - 1; i++) {
-    if (random() < 0.65) connectors.push(new Connector(points[i], points[i+1], note, vel));
+    if (random() < 0.7) connectors.push(new Connector(points[i], points[i+1], note, vel));
   }
 
-  // a few cubes as nodes
-  for (let i = 0; i < floor(cubeCount * 0.75); i++) {
+  for (let i = 0; i < floor(cubeCount * 0.65); i++) {
     cubes.push(new CubeShard(note, vel, "node", "synaptic", anchor));
   }
 }
 
-// ---------------- SYSTEM 4: ORBITAL RING ----------------
 function spawnOrbitalRing(anchor, note, vel, cubeCount, particleCount) {
-  const radius = map(note, 36, 84, 120, 320);
-  const ringCount = floor(particleCount * 0.6);
+  const radius = map(note, 36, 84, 120, 340);
+  const ringCount = floor(particleCount * 0.7);
 
   for (let i = 0; i < ringCount; i++) {
     const a = (i / ringCount) * TWO_PI;
@@ -418,7 +421,7 @@ function spawnOrbitalRing(anchor, note, vel, cubeCount, particleCount) {
       anchor.y + sin(a) * radius * 0.65,
       anchor.z + sin(a) * radius * 0.4
     );
-    particles.push(new FastParticle(note, vel, "ring", "orbital", p));
+    particles.push(new SmartParticle(note, vel, "ring", "orbital", p));
   }
 
   for (let i = 0; i < cubeCount; i++) {
@@ -426,84 +429,74 @@ function spawnOrbitalRing(anchor, note, vel, cubeCount, particleCount) {
   }
 }
 
-// ---------------- SYSTEM 5: SPIRAL CITY ----------------
-function spawnSpiralCity(anchor, note, vel, cubeCount, particleCount) {
-  const steps = floor(map(vel, 1, 127, 20, 60));
-  let r = 40;
-
-  for (let i = 0; i < steps; i++) {
-    const a = i * 0.35;
-    r += 3.2;
-    const p = createVector(
-      anchor.x + cos(a) * r,
-      anchor.y + sin(a * 0.6) * 90,
-      anchor.z + sin(a) * r
-    );
-
-    if (random() < 0.55) cubes.push(new CubeShard(note, vel, "spiral", "city", p));
-    particles.push(new FastParticle(note, vel, "spiral", "city", p));
-  }
-}
-
-// ---------------- SYSTEM 6: STORM FIELD ----------------
 function spawnStormField(anchor, note, vel, cubeCount, particleCount) {
-  const w = map(world.wind, 0, 30, 0.3, 3.2);
-  const n = floor(particleCount * 1.1);
+  const n = floor(particleCount * 1.2);
 
   for (let i = 0; i < n; i++) {
-    particles.push(new FastParticle(note, vel, "storm", "storm", anchor));
+    particles.push(new SmartParticle(note, vel, "storm", "storm", anchor));
   }
   for (let i = 0; i < floor(cubeCount * 0.5); i++) {
     cubes.push(new CubeShard(note, vel, "storm", "storm", anchor));
   }
-
-  // extra: more connectors if stormy
-  if (world.wind > 15 && random() < 0.8) {
-    const a = anchor.copy();
-    const b = anchor.copy().add(createVector(random(-260, 260), random(-180, 180), random(-220, 220)));
-    connectors.push(new Connector(a, b, note, vel));
-  }
 }
 
-// ---------------- SYSTEM 7: CRYSTAL BLOOM ----------------
 function spawnCrystalBloom(anchor, note, vel, cubeCount, particleCount) {
-  // high notes bloom into bright structures
-  const n = floor(map(note, 48, 84, 12, 40));
+  const n = floor(map(note, 48, 84, 12, 42));
+
   for (let i = 0; i < n; i++) {
     const p = anchor.copy().add(p5.Vector.random3D().mult(random(40, 220)));
     cubes.push(new CubeShard(note, vel, "crystal", "bloom", p));
   }
 
-  for (let i = 0; i < floor(particleCount * 0.65); i++) {
-    particles.push(new FastParticle(note, vel, "spark", "bloom", anchor));
+  for (let i = 0; i < floor(particleCount * 0.7); i++) {
+    particles.push(new SmartParticle(note, vel, "spark", "bloom", anchor));
   }
 }
 
-// ---------------- SYSTEM 8: GRAVITY WELL ----------------
 function spawnGravityWell(anchor, note, vel, cubeCount, particleCount) {
   for (let i = 0; i < particleCount; i++) {
-    particles.push(new FastParticle(note, vel, "gravity", "well", anchor));
+    particles.push(new SmartParticle(note, vel, "gravity", "well", anchor));
   }
-
-  for (let i = 0; i < floor(cubeCount * 0.8); i++) {
+  for (let i = 0; i < floor(cubeCount * 0.7); i++) {
     cubes.push(new CubeShard(note, vel, "gravity", "well", anchor));
   }
 }
 
-// ---------------- SYSTEM 9: METEOR BURST ----------------
 function spawnMeteorBurst(anchor, note, vel, cubeCount, particleCount) {
   for (let i = 0; i < floor(particleCount * 1.1); i++) {
-    particles.push(new FastParticle(note, vel, "meteor", "meteor", anchor));
+    particles.push(new SmartParticle(note, vel, "meteor", "meteor", anchor));
   }
   for (let i = 0; i < floor(cubeCount * 0.6); i++) {
     cubes.push(new CubeShard(note, vel, "meteor", "meteor", anchor));
   }
+}
 
-  // connectors as trajectories
-  if (random() < 0.7) {
-    const a = anchor.copy();
-    const b = anchor.copy().add(createVector(random(-420, 420), random(-260, 260), random(-520, 520)));
-    connectors.push(new Connector(a, b, note, vel));
+// =====================================================
+// NEW SYSTEMS: CLUSTERS & MEMBRANE
+// =====================================================
+function spawnClusters(anchor, note, vel, cubeCount, particleCount) {
+  // Many particles converge to attractors
+  for (let i = 0; i < particleCount; i++) {
+    particles.push(new SmartParticle(note, vel, "cluster", "clusters", anchor));
+  }
+
+  // Cubes as "bones" around attractors
+  for (let i = 0; i < cubeCount; i++) {
+    const idx = floor(random(attractors.length || 1));
+    const base = attractors[idx] ? attractors[idx].copy() : anchor.copy();
+    cubes.push(new CubeShard(note, vel, "node", "architecture", base));
+  }
+}
+
+function spawnMembrane(anchor, note, vel, cubeCount, particleCount) {
+  // Membrane = particles align into moving sheets
+  for (let i = 0; i < particleCount; i++) {
+    particles.push(new SmartParticle(note, vel, "membrane", "membrane", anchor));
+  }
+
+  // Cubes as "anchors" of the membrane
+  for (let i = 0; i < floor(cubeCount * 0.7); i++) {
+    cubes.push(new CubeShard(note, vel, "foundation", "membrane", anchor));
   }
 }
 
@@ -518,7 +511,7 @@ class CubeShard {
     this.paletteMode = paletteMode;
 
     this.birth = millis();
-    this.life = map(vel, 0, 127, 1400, 5200);
+    this.life = map(vel, 0, 127, 1600, 6000);
 
     this.size = map(vel, 0, 127, 12, 85) * random(0.55, 1.25);
 
@@ -528,7 +521,6 @@ class CubeShard {
     this.spin = createVector(random(-0.03, 0.03), random(-0.03, 0.03), random(-0.03, 0.03));
     this.alpha = 1.0;
 
-    // palette driven by climate + note
     const dayShift = world.isDay ? 0 : 40;
     const humShift = map(world.humidity, 0, 100, 0, 30);
     let baseHue = map(note, 21, 108, 160, 360);
@@ -537,6 +529,8 @@ class CubeShard {
     if (paletteMode === "bloom") baseHue = 300;
     if (paletteMode === "well") baseHue = 180;
     if (paletteMode === "meteor") baseHue = 30;
+    if (paletteMode === "membrane") baseHue = 210;
+    if (paletteMode === "clusters") baseHue = 280;
 
     this.hue = (baseHue + dayShift + humShift + vel * 0.7) % 360;
 
@@ -551,32 +545,23 @@ class CubeShard {
     const t = (millis() - this.birth) / this.life;
     this.alpha = 1 - t;
 
-    // movement variety
-    if (this.moveMode === "ring") {
-      const a = frameCount * 0.014 + this.note * 0.02;
-      this.pos.x += cos(a) * 0.9;
-      this.pos.z += sin(a) * 0.9;
-    } else if (this.moveMode === "spiral") {
-      const a = frameCount * 0.016 + this.note * 0.02;
-      this.pos.x += cos(a) * 1.2;
-      this.pos.z += sin(a) * 1.2;
-      this.pos.y += sin(a * 0.5) * 0.7;
-    } else if (this.moveMode === "storm") {
+    if (this.moveMode === "storm") {
       this.pos.x += this.v.x * 2.2;
       this.pos.y += sin(frameCount * 0.04 + this.note * 0.05) * 0.7;
       this.pos.z += this.v.z * 1.2;
     } else if (this.moveMode === "gravity") {
-      // fall towards center
       const toCenter = p5.Vector.mult(this.pos.copy(), -0.006);
       this.pos.add(toCenter);
       this.pos.add(this.v.copy().mult(0.25));
     } else if (this.moveMode === "meteor") {
       this.pos.add(this.v.copy().mult(2.6));
+    } else if (this.moveMode === "node") {
+      // stabilize a bit
+      this.pos.add(this.v.copy().mult(0.25));
+      this.pos.x += sin(frameCount * 0.008 + this.note * 0.01) * 0.25;
+      this.pos.y += cos(frameCount * 0.008 + this.note * 0.01) * 0.25;
     } else {
-      // drift
       this.pos.add(this.v.copy().mult(0.45));
-      this.pos.x += sin(frameCount * 0.01 + this.note * 0.03) * 0.3;
-      this.pos.y += cos(frameCount * 0.01 + this.note * 0.02) * 0.3;
     }
 
     this.v.mult(0.985);
@@ -590,21 +575,19 @@ class CubeShard {
     rotateY(frameCount * this.spin.y);
     rotateZ(frameCount * this.spin.z);
 
-    // glass vibe
     ambientMaterial(this.hue, 55, 94, this.alpha * 0.85);
     specularMaterial(this.hue, 70, 100, this.alpha);
     shininess(160);
 
     const s = this.size * (0.55 + this.alpha * 0.85);
-
     box(s, s * random(0.35, 1.3), s * random(0.35, 1.3));
 
     pop();
   }
 }
 
-// Fast particles as point sprites (mobile safe)
-class FastParticle {
+// ✅ Smart particle: can behave like cluster / membrane / synapse
+class SmartParticle {
   constructor(note, vel, moveMode, paletteMode, anchor = null) {
     this.note = note;
     this.vel = vel || 60;
@@ -612,17 +595,12 @@ class FastParticle {
     this.paletteMode = paletteMode;
 
     this.birth = millis();
-    this.life = note ? map(this.vel, 0, 127, 900, 2800) : random(2500, 7000);
+    this.life = note ? map(this.vel, 0, 127, 1100, 3600) : random(2500, 9000);
 
     const base = anchor ? anchor.copy() : createVector(0,0,0);
+    this.pos = base.add(createVector(random(-320, 320), random(-240, 240), random(-420, 420)));
 
-    this.pos = base.add(createVector(
-      random(-320, 320),
-      random(-240, 240),
-      random(-420, 420)
-    ));
-
-    this.v = p5.Vector.random3D().mult(map(world.wind, 0, 30, 0.2, 2.8));
+    this.v = p5.Vector.random3D().mult(map(world.wind, 0, 30, 0.2, 2.7));
     this.alpha = 1.0;
 
     const issHue = map(world.issLon, -180, 180, 180, 360);
@@ -632,10 +610,14 @@ class FastParticle {
     if (paletteMode === "bloom") hue = 300;
     if (paletteMode === "meteor") hue = 30;
     if (paletteMode === "synaptic") hue = 160;
+    if (paletteMode === "membrane") hue = 220;
+    if (paletteMode === "clusters") hue = 285;
 
     this.hue = hue;
+    this.r = note ? map(this.vel, 0, 127, 1.2, 5.6) : random(1.0, 3.0);
 
-    this.r = note ? map(this.vel, 0, 127, 1.2, 5.4) : random(1.0, 3.0);
+    // mass affects clustering stability
+    this.mass = map(this.vel, 0, 127, 0.8, 2.2);
   }
 
   isDead() {
@@ -646,34 +628,65 @@ class FastParticle {
     const t = (millis() - this.birth) / this.life;
     this.alpha = 1 - t;
 
-    if (this.moveMode === "ring") {
-      const a = frameCount * 0.02 + (this.note || 50) * 0.04;
-      this.pos.x += cos(a) * 0.7;
-      this.pos.z += sin(a) * 0.7;
-    } else if (this.moveMode === "spiral") {
-      const a = frameCount * 0.015 + (this.note || 50) * 0.03;
-      this.pos.x += cos(a) * 0.9;
-      this.pos.y += sin(a) * 0.6;
-      this.pos.z += sin(a * 0.8) * 0.9;
-    } else if (this.moveMode === "storm") {
-      this.pos.x += this.v.x * 2.7;
-      this.pos.y += sin(frameCount * 0.05 + (this.note || 60) * 0.04) * 0.55;
-      this.pos.z += this.v.z * 1.2;
-    } else if (this.moveMode === "gravity") {
-      const toCenter = p5.Vector.mult(this.pos.copy(), -0.01);
-      this.pos.add(toCenter);
-      this.pos.add(this.v.copy().mult(0.18));
-    } else if (this.moveMode === "meteor") {
-      this.pos.add(this.v.copy().mult(3.1));
-    } else if (this.moveMode === "synapse") {
-      this.pos.add(this.v.copy().mult(0.35));
-      this.pos.x += sin(frameCount * 0.03 + (this.note || 60)) * 0.25;
-      this.pos.y += cos(frameCount * 0.03 + (this.note || 60)) * 0.25;
-    } else {
-      this.pos.add(this.v.copy().mult(0.55));
+    // global drift
+    let drift = this.v.copy().mult(0.55);
+
+    // --- MODE FORCES ---
+    if (this.moveMode === "cluster") {
+      // pull to nearest attractor (cluster formation)
+      if (attractors.length > 0) {
+        let closest = attractors[0];
+        let bestD = p5.Vector.dist(this.pos, closest);
+
+        for (let a of attractors) {
+          const d = p5.Vector.dist(this.pos, a);
+          if (d < bestD) { bestD = d; closest = a; }
+        }
+
+        const pull = p5.Vector.sub(closest, this.pos);
+        pull.mult(0.0022 * (2.5 / this.mass));
+        drift.add(pull);
+      }
     }
 
-    this.v.mult(0.992);
+    if (this.moveMode === "membrane") {
+      // membrane: flatten into a moving sheet + noise curl
+      const flattenStrength = 0.007;
+      this.pos.y *= (1 - flattenStrength); // gentle flatten toward y=0
+
+      const n = noise(this.pos.x * 0.005, this.pos.z * 0.005, frameCount * 0.004);
+      const angle = n * TWO_PI * 2;
+      const curl = createVector(cos(angle), sin(angle) * 0.3, sin(angle));
+      curl.mult(0.75);
+      drift.add(curl.mult(0.35 / this.mass));
+    }
+
+    if (this.moveMode === "synapse") {
+      drift.mult(0.55);
+      this.pos.x += sin(frameCount * 0.03 + (this.note || 60)) * 0.25;
+      this.pos.y += cos(frameCount * 0.03 + (this.note || 60)) * 0.25;
+    }
+
+    if (this.moveMode === "gravity") {
+      const toCenter = p5.Vector.mult(this.pos.copy(), -0.01);
+      drift.add(toCenter.mult(0.04));
+    }
+
+    if (this.moveMode === "meteor") {
+      drift.mult(3.1);
+    }
+
+    if (this.moveMode === "storm") {
+      drift.x *= 2.7;
+      drift.z *= 1.25;
+      drift.y += sin(frameCount * 0.05 + (this.note || 60) * 0.04) * 0.55;
+    }
+
+    // apply
+    this.pos.add(drift);
+
+    // damp velocity
+    this.v.mult(0.993);
   }
 
   draw() {
@@ -685,7 +698,6 @@ class FastParticle {
   }
 }
 
-// Connector lines
 class Connector {
   constructor(a, b, note, vel) {
     this.a = a.copy();
@@ -694,7 +706,7 @@ class Connector {
     this.vel = vel;
 
     this.birth = millis();
-    this.life = map(vel, 0, 127, 800, 2200);
+    this.life = map(vel, 0, 127, 900, 2600);
 
     this.hue = map(note, 20, 100, 160, 360) % 360;
   }
@@ -714,7 +726,7 @@ class Connector {
 }
 
 // =====================================================
-// MIDI SETUP
+// MIDI
 // =====================================================
 function setupMIDI() {
   if (!navigator.requestMIDIAccess) {
@@ -767,7 +779,7 @@ function keyReleased() {
 }
 
 // =====================================================
-// POINTER (TOUCH/MOUSE/PEN) UNIVERSAL
+// POINTER EVENTS (Touch/Mouse/Pen)
 // =====================================================
 function attachUniversalPointerEvents() {
   const c = document.querySelector("canvas");
@@ -804,20 +816,18 @@ function attachUniversalPointerEvents() {
 }
 
 // =====================================================
-// DRAW: LIGHTS + WORLD
+// DRAW
 // =====================================================
 function draw() {
-  // soft trail
   background(0, 0.12);
 
-  // lights with external modulation
+  // lighting
   lightPhase += 0.009 + map(world.wind, 0, 30, 0, 0.011);
 
   const dayAmp = world.isDay ? 1.0 : 0.55;
 
   ambientLight(14 * dayAmp);
 
-  // invisible directional lights (colour shifting)
   directionalLight(
     (80 + 60 * sin(lightPhase)) * dayAmp,
     120 * dayAmp,
@@ -839,61 +849,65 @@ function draw() {
     0.2, -0.8, -1
   );
 
-  // ISS point light (orbital)
+  // ISS light
   const issX = map(world.issLon, -180, 180, -240, 240);
   const issY = map(world.issLat, -90, 90, -160, 160);
   pointLight(255 * dayAmp, 200 * dayAmp, 140 * dayAmp, issX, issY, 360);
 
-  // camera motion depends on mode
+  // camera drift
   const cloudSpin = map(world.cloud, 0, 100, 0.001, 0.0022);
   globalSpin += cloudSpin * 0.7;
 
   rotateY(globalSpin);
   rotateX(sin(frameCount * 0.001) * 0.12);
 
-  // nucleus - gives spatial reference always
+  // nucleus
   push();
   const coreHue = map(world.temperature, -10, 40, 180, 330);
   fill(coreHue, 35, 35, 0.22);
   sphere(22 + sin(frameCount * 0.02) * 3);
   pop();
 
+  // attractors expire slowly
+  if (attractorLife && millis() > attractorLife) {
+    attractors = [];
+    attractorLife = 0;
+  }
+
   // connectors
   for (let cn of connectors) cn.draw();
   connectors = connectors.filter(cn => !cn.isDead());
 
-  // particles first (depth)
+  // particles
   for (let p of particles) {
     p.update();
     p.draw();
   }
   particles = particles.filter(p => !p.isDead());
 
-  // cubes second
+  // cubes
   for (let c of cubes) {
     c.update();
     c.draw();
   }
   cubes = cubes.filter(c => !c.isDead());
 
-  // If no recent interactions, slowly shift world mode to keep alive
+  // keep alive: change mode if no recent interactions
   if (millis() > activeWorldUntil && random() < 0.01) {
     setWorldMode(random(worldModes), floor(random(5000, 9000)));
   }
 
-  // minimal HUD
+  // HUD
   push();
   resetMatrix();
   fill(255);
   textAlign(LEFT, TOP);
   textSize(12);
-  text("DUROME · Surprise Engine Field · Cubes + Particles + Satellites + Weather", 14, 14);
-  text(`Mode: ${activeWorldMode} · Valencia: ${world.temperature}°C wind:${world.wind} humidity:${world.humidity}%`, 14, 32);
+  text("DUROME · Surprise Engine Field 2.0 · Clusters + Membranes", 14, 14);
+  text(`Mode: ${activeWorldMode} | Valencia: ${world.temperature}°C wind:${world.wind} hum:${world.humidity}%`, 14, 32);
   pop();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
-
-
