@@ -5,27 +5,21 @@ let audioReady = false;
 let started = false;
 
 let soundBankJSON = null;
-
-// soundGroups[group] = [ SoundVoice, SoundVoice, ... ]
-// Cada SoundVoice es { file, sound: [voice1, voice2, ...] }
 let soundGroups = {};
-const VOICES_PER_FILE = 5; // polifonía por archivo
+const VOICES_PER_FILE = 5;
 
-// Nota -> voice actualmente sonando (para parar al soltar)
-let noteToVoice = {};   // { 60: {sound: p5.SoundFile, group:"glass"} }
-let noteToMeta = {};    // opcional
+// Nota -> sonido activo
+let noteToVoice = {};  // { note: {sound, group} }
 
-// Touch -> note
-let touchIdToNote = {}; // { touchId: note }
+// POINTER -> note activo (multi-touch robusto)
+let pointerIdToNote = {}; // { pointerId: note }
 
 let structures = [];
 let globalEnergy = 0;
 
 const rightHandSplit = 60; // C4
 
-// ---------------------
-// TECLADO -> NOTAS
-// ---------------------
+// Teclado ordenador -> notas
 const keyboardMap = {
   "a": 48, "s": 50, "d": 52, "f": 53, "g": 55, "h": 57, "j": 59,
   "k": 60, "l": 62,
@@ -34,98 +28,67 @@ const keyboardMap = {
 };
 let pressedKeys = {};
 
-// Pool para ratón/táctil aleatorio
 const randomNotesPool = [36,38,40,43,45,48,50,52,55,57,60,62,64,67,69,71,72,74,76,79];
-let mouseActiveNote = null;
 
-// ---------------------
-// PRELOAD: carga JSON + audios
-// ---------------------
 function preload() {
   soundBankJSON = loadJSON("soundbank.json");
-  // No cargamos aquí los audios porque primero necesitamos el JSON.
-  // Pero p5 preload NO permite async fácil con JSON→audios,
-  // así que lo resolvemos en setup con "loading screen" y callbacks.
 }
 
-// ---------------------
-// Helpers
-// ---------------------
+function setup() {
+  createCanvas(windowWidth, windowHeight, WEBGL);
+  colorMode(HSB, 360, 100, 100, 1);
+  noStroke();
+
+  loadAllSoundsFromJSON();
+
+  const btn = document.getElementById("startBtn");
+  btn.addEventListener("click", async () => {
+    await userStartAudio(); // ✅ desbloquea audio mobile
+    audioReady = true;
+    started = true;
+
+    setupMIDI();
+    attachUniversalPointerEvents(); // ✅ LO MÁS IMPORTANTE
+
+    document.getElementById("overlay").style.display = "none";
+    setStatus("✅ Ready: MIDI + Keyboard + Touch/Mouse/Pen");
+  });
+}
+
+// -----------------------------
+// STATUS
+// -----------------------------
 function setStatus(msg) {
   const el = document.getElementById("status");
   if (el) el.textContent = msg;
 }
 
-function fadeOutAndStop(snd, seconds = 0.08) {
-  if (!snd) return;
-  try {
-    snd.setVolume(0, seconds);
-    setTimeout(() => {
-      try { snd.stop(); } catch(e) {}
-    }, Math.max(10, seconds * 1000 + 40));
-  } catch(e) {
-    try { snd.stop(); } catch(e2) {}
-  }
-}
-
-function pickGroupForNote(note) {
-  const isRight = note >= rightHandSplit;
-
-  // Si existe shimmer/glass/atmos
-  if (isRight) {
-    // derecha: brillo y cristal
-    return (random() < 0.65 && soundGroups.shimmer) ? "shimmer" : "glass";
-  } else {
-    // izquierda: base atmos y glass
-    return (random() < 0.7 && soundGroups.atmos) ? "atmos" : "glass";
-  }
-}
-
-function getAvailableVoice(groupName) {
-  const files = soundGroups[groupName];
-  if (!files || files.length === 0) return null;
-
-  // Elegimos un archivo dentro del grupo
-  const fileObj = random(files);
-  if (!fileObj || !fileObj.voices || fileObj.voices.length === 0) return null;
-
-  // Buscamos una voz libre (que no esté sonando)
-  for (let v of fileObj.voices) {
-    if (!v.isPlaying()) return v;
-  }
-
-  // Si todas están ocupadas: reciclamos una (paramos y devolvemos)
-  const v = random(fileObj.voices);
-  if (v && v.isPlaying()) v.stop();
-  return v || null;
-}
-
-function loadAllSoundsFromJSON(onDone) {
+// -----------------------------
+// SOUND LOADING (poly voices)
+// -----------------------------
+function loadAllSoundsFromJSON() {
   if (!soundBankJSON) {
-    setStatus("❌ soundbank.json not found in root.");
+    console.warn("❌ soundbank.json missing.");
+    setStatus("❌ soundbank.json missing.");
     return;
   }
 
+  soundGroups = {};
   const groups = Object.keys(soundBankJSON);
+
   let totalToLoad = 0;
   let loaded = 0;
 
-  // Conteo total
   for (let g of groups) {
     totalToLoad += (soundBankJSON[g]?.length || 0) * VOICES_PER_FILE;
-  }
-  if (totalToLoad === 0) {
-    setStatus("❌ soundbank.json is empty.");
-    return;
   }
 
   setStatus(`⏳ Loading sounds... 0 / ${totalToLoad}`);
 
-  // Estructura
   for (let g of groups) {
     soundGroups[g] = [];
-    for (let file of soundBankJSON[g]) {
 
+    for (let file of soundBankJSON[g]) {
       const fileEntry = { file, voices: [] };
       soundGroups[g].push(fileEntry);
 
@@ -137,22 +100,18 @@ function loadAllSoundsFromJSON(onDone) {
             setStatus(`⏳ Loading sounds... ${loaded} / ${totalToLoad}`);
             if (loaded >= totalToLoad) {
               setStatus("✅ Sounds loaded. Press START.");
-              onDone?.();
             }
           },
-          (err) => {
+          () => {
             loaded++;
-            console.warn("Error loading", file, err);
-            setStatus(`⚠️ Missing/blocked audio: ${file} (${loaded}/${totalToLoad})`);
+            setStatus(`⚠️ Missing: ${file} (${loaded}/${totalToLoad})`);
             if (loaded >= totalToLoad) {
-              setStatus("✅ Loading finished (with warnings). Press START.");
-              onDone?.();
+              setStatus("✅ Loaded (with warnings). Press START.");
             }
           }
         );
 
-        // Ajustes recomendados
-        snd.playMode("sustain"); // permite que se mantenga hasta stop()
+        snd.playMode("sustain");
         snd.setVolume(0);
 
         fileEntry.voices.push(snd);
@@ -161,149 +120,54 @@ function loadAllSoundsFromJSON(onDone) {
   }
 }
 
-// ---------------------
-// SETUP
-// ---------------------
-function setup() {
-  createCanvas(windowWidth, windowHeight, WEBGL);
-  colorMode(HSB, 360, 100, 100, 1);
-  noStroke();
+function getAvailableVoice(groupName) {
+  const files = soundGroups[groupName];
+  if (!files || files.length === 0) return null;
 
-  // Carga de audios (con progreso)
-  loadAllSoundsFromJSON(() => {});
+  const fileObj = random(files);
+  if (!fileObj || !fileObj.voices) return null;
 
-  // Start button
-  const btn = document.getElementById("startBtn");
-  btn.addEventListener("click", async () => {
-    await userStartAudio();
-    audioReady = true;
-    started = true;
-
-    setupMIDI();
-
-    document.getElementById("overlay").style.display = "none";
-    setStatus("✅ Ready: MIDI + Keyboard + Mouse + Touch (multitouch).");
-  });
-}
-
-// ---------------------
-// MIDI
-// ---------------------
-function setupMIDI() {
-  if (!navigator.requestMIDIAccess) {
-    setStatus("⚠️ WebMIDI not supported. Keyboard/Mouse/Touch ok.");
-    return;
+  for (let v of fileObj.voices) {
+    if (!v.isPlaying()) return v;
   }
-  navigator.requestMIDIAccess().then(
-    (midi) => {
-      midiAccess = midi;
-      const inputs = Array.from(midiAccess.inputs.values());
-      inputs.forEach((input) => (input.onmidimessage = handleMIDI));
-      midiReady = true;
-      setStatus("✅ MIDI connected. Play.");
-    },
-    () => setStatus("⚠️ MIDI failed. Keyboard/Mouse/Touch ok.")
-  );
+
+  // si todo ocupado, recicla una
+  const v = random(fileObj.voices);
+  if (v && v.isPlaying()) v.stop();
+  return v;
 }
 
-function handleMIDI(msg) {
-  if (!audioReady) return;
+function pickGroupForNote(note) {
+  const isRight = note >= rightHandSplit;
 
-  const [cmd, note, vel] = msg.data;
-  const isNoteOn = cmd === 144 && vel > 0;
-  const isNoteOff = cmd === 128 || (cmd === 144 && vel === 0);
-
-  if (isNoteOn) onNoteOn(note, vel);
-  if (isNoteOff) onNoteOff(note);
-}
-
-// ---------------------
-// Keyboard
-// ---------------------
-function keyPressed() {
-  if (!audioReady) return;
-
-  const k = key.toLowerCase();
-  if (!(k in keyboardMap)) return;
-  if (pressedKeys[k]) return;
-
-  pressedKeys[k] = true;
-  const note = keyboardMap[k];
-  const vel = 95;
-  onNoteOn(note, vel);
-}
-
-function keyReleased() {
-  if (!audioReady) return;
-
-  const k = key.toLowerCase();
-  if (!(k in keyboardMap)) return;
-
-  pressedKeys[k] = false;
-  const note = keyboardMap[k];
-  onNoteOff(note);
-}
-
-// ---------------------
-// Mouse
-// ---------------------
-function mousePressed() {
-  if (!audioReady || !started) return;
-  if (mouseActiveNote !== null) return;
-
-  const note = random(randomNotesPool);
-  const vel = floor(random(70, 120));
-  mouseActiveNote = note;
-  onNoteOn(note, vel);
-}
-
-function mouseReleased() {
-  if (!audioReady || !started) return;
-  if (mouseActiveNote === null) return;
-
-  onNoteOff(mouseActiveNote);
-  mouseActiveNote = null;
-}
-
-// ---------------------
-// Touch (multitouch real)
-// ---------------------
-function touchStarted() {
-  if (!audioReady || !started) return false;
-
-  // Activamos un note por cada touch nuevo
-  for (let t of touches) {
-    const id = t.id ?? `${t.x}_${t.y}`; // fallback
-    if (touchIdToNote[id] != null) continue;
-
-    const note = random(randomNotesPool);
-    const vel = floor(random(70, 120));
-    touchIdToNote[id] = note;
-    onNoteOn(note, vel);
+  if (isRight) {
+    if (soundGroups.shimmer && random() < 0.65) return "shimmer";
+    return "glass";
+  } else {
+    if (soundGroups.atmos && random() < 0.7) return "atmos";
+    return "glass";
   }
-  return false;
 }
 
-function touchEnded() {
-  if (!audioReady || !started) return false;
-
-  // Cuando se levantan dedos, liberamos notas que ya no están en touches
-  const stillIds = new Set(touches.map(t => (t.id ?? `${t.x}_${t.y}`)));
-
-  for (let id in touchIdToNote) {
-    if (!stillIds.has(id)) {
-      onNoteOff(touchIdToNote[id]);
-      delete touchIdToNote[id];
-    }
+function fadeOutAndStop(snd, seconds = 0.08) {
+  if (!snd) return;
+  try {
+    snd.setVolume(0, seconds);
+    setTimeout(() => {
+      try { snd.stop(); } catch (e) {}
+    }, Math.max(10, seconds * 1000 + 60));
+  } catch (e) {
+    try { snd.stop(); } catch (e2) {}
   }
-  return false;
 }
 
-// ---------------------
-// NOTE ON/OFF
-// ---------------------
+// -----------------------------
+// NOTE ON / OFF
+// -----------------------------
 function onNoteOn(note, vel) {
-  // Si ya sonaba esa nota, la paramos y reiniciamos
+  if (!audioReady) return;
+
+  // si ya sonaba esa nota, la cortamos
   if (noteToVoice[note]?.sound) {
     fadeOutAndStop(noteToVoice[note].sound, 0.03);
     delete noteToVoice[note];
@@ -311,24 +175,19 @@ function onNoteOn(note, vel) {
 
   globalEnergy = constrain(globalEnergy + vel / 127, 0, 4);
 
-  // elegir grupo
   let group = pickGroupForNote(note);
   if (!soundGroups[group] || soundGroups[group].length === 0) {
-    // fallback
     group = soundGroups.glass ? "glass" : Object.keys(soundGroups)[0];
   }
 
   const voice = getAvailableVoice(group);
   if (!voice) return;
 
-  // volumen/rate
   const amp = map(vel, 1, 127, 0.06, 0.22);
   const rate = constrain(map(note, 36, 96, 0.6, 1.55), 0.45, 1.8);
 
   voice.rate(rate);
   voice.setVolume(amp, 0.02);
-
-  // Sustain hasta soltar:
   voice.play();
 
   noteToVoice[note] = { sound: voice, group };
@@ -341,16 +200,113 @@ function onNoteOff(note) {
   globalEnergy *= 0.88;
 
   const entry = noteToVoice[note];
-  if (entry?.sound) {
-    // fade out + stop
-    fadeOutAndStop(entry.sound, 0.08);
-  }
+  if (entry?.sound) fadeOutAndStop(entry.sound, 0.08);
+
   delete noteToVoice[note];
 }
 
-// ---------------------
+// -----------------------------
+// MIDI
+// -----------------------------
+function setupMIDI() {
+  if (!navigator.requestMIDIAccess) {
+    setStatus("⚠️ No WebMIDI. Touch/keyboard enabled.");
+    return;
+  }
+
+  navigator.requestMIDIAccess().then(
+    (midi) => {
+      midiAccess = midi;
+      const inputs = Array.from(midiAccess.inputs.values());
+      inputs.forEach((input) => (input.onmidimessage = handleMIDI));
+      midiReady = true;
+      setStatus("✅ MIDI connected.");
+    },
+    () => setStatus("⚠️ MIDI failed. Touch/keyboard enabled.")
+  );
+}
+
+function handleMIDI(msg) {
+  const [cmd, note, vel] = msg.data;
+  const isNoteOn = cmd === 144 && vel > 0;
+  const isNoteOff = cmd === 128 || (cmd === 144 && vel === 0);
+
+  if (isNoteOn) onNoteOn(note, vel);
+  if (isNoteOff) onNoteOff(note);
+}
+
+// -----------------------------
+// KEYBOARD (PC)
+// -----------------------------
+function keyPressed() {
+  if (!audioReady) return;
+  const k = key.toLowerCase();
+  if (!(k in keyboardMap)) return;
+  if (pressedKeys[k]) return;
+
+  pressedKeys[k] = true;
+  onNoteOn(keyboardMap[k], 95);
+}
+
+function keyReleased() {
+  if (!audioReady) return;
+  const k = key.toLowerCase();
+  if (!(k in keyboardMap)) return;
+
+  pressedKeys[k] = false;
+  onNoteOff(keyboardMap[k]);
+}
+
+// -----------------------------
+// ✅ UNIVERSAL POINTER EVENTS (Android FIX)
+// -----------------------------
+function attachUniversalPointerEvents() {
+  // El canvas real de p5:
+  const c = document.querySelector("canvas");
+  if (!c) {
+    console.warn("⚠️ canvas not found for pointer events.");
+    return;
+  }
+
+  // Desactiva gestos del navegador (zoom/scroll) sobre el canvas
+  c.style.touchAction = "none";
+
+  c.addEventListener("pointerdown", (e) => {
+    if (!audioReady) return;
+
+    // capturamos pointer para que siempre lleguen up/cancel
+    try { c.setPointerCapture(e.pointerId); } catch (_) {}
+
+    // nota aleatoria
+    const note = random(randomNotesPool);
+    const vel = floor(random(70, 120));
+
+    pointerIdToNote[e.pointerId] = note;
+    onNoteOn(note, vel);
+  }, { passive: false });
+
+  c.addEventListener("pointerup", (e) => {
+    const note = pointerIdToNote[e.pointerId];
+    if (note != null) {
+      onNoteOff(note);
+      delete pointerIdToNote[e.pointerId];
+    }
+  }, { passive: false });
+
+  c.addEventListener("pointercancel", (e) => {
+    const note = pointerIdToNote[e.pointerId];
+    if (note != null) {
+      onNoteOff(note);
+      delete pointerIdToNote[e.pointerId];
+    }
+  }, { passive: false });
+
+  setStatus("✅ Pointer events enabled (touch/mouse/pen).");
+}
+
+// -----------------------------
 // VISUALS
-// ---------------------
+// -----------------------------
 class Structure {
   constructor(note, vel, type) {
     this.note = note;
@@ -358,14 +314,14 @@ class Structure {
     this.type = type;
 
     this.birth = millis();
-    this.life = map(vel, 0, 127, 1100, 3400);
+    this.life = map(vel, 0, 127, 1200, 3600);
 
-    this.size = map(vel, 0, 127, 18, 120);
+    this.size = map(vel, 0, 127, 18, 140);
 
     this.pos = createVector(
-      random(-340, 340),
-      random(-240, 240),
-      random(-360, 360)
+      random(-360, 360),
+      random(-260, 260),
+      random(-400, 400)
     );
 
     this.spin = createVector(
@@ -389,7 +345,6 @@ class Structure {
     const t = (millis() - this.birth) / this.life;
     this.alpha = 1.0 - t;
 
-    // drift “constructivo”
     this.pos.x += sin(frameCount * 0.01 + this.note * 0.03) * 0.6;
     this.pos.y += cos(frameCount * 0.012 + this.note * 0.02) * 0.6;
     this.pos.z += sin(frameCount * 0.008 + this.note * 0.04) * 0.6;
@@ -432,9 +387,9 @@ function drawTetra(sz) {
   endShape();
 }
 
-// ---------------------
-// DRAW LOOP
-// ---------------------
+// -----------------------------
+// DRAW
+// -----------------------------
 function draw() {
   background(0, 0.14);
 
@@ -467,15 +422,14 @@ function draw() {
   fill(255);
   textAlign(LEFT, TOP);
   textSize(12);
-  text("🎹 MIDI / Keyboard / Mouse / Touch (multitouch)", 14, 14);
-  text("Keyboard: A S D F G H J K / Q W E R T Y U I O P", 14, 32);
-  text("Mouse: click-hold → sound | release → stop", 14, 50);
-  text("Touch: press → sound | lift finger → stop", 14, 68);
+  text("✅ Universal input: MIDI / Keyboard / Touch / Mouse / Pen", 14, 14);
+  text("Touch Android fixed via Pointer Events", 14, 32);
   pop();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
+
 
 
