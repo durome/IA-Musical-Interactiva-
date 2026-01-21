@@ -1,7 +1,7 @@
 // =====================================================
-// DUROME · CLEAN SCULPTURAL FIELD 3.0
+// DUROME · MODULAR CLEAN FIELD (MODE SWITCHING)
 // Eduardo Romaguera · Cubes + Circles + Triangles + Particles
-// Clean motion: forward/back + size lifecycle (no jitter)
+// One sketch — multiple modes switching every 5 seconds
 // MIDI + Keyboard + Touch + Mouse + External Signals
 // =====================================================
 
@@ -43,19 +43,28 @@ let world = {
 };
 
 // -------------------- VISUAL OBJECTS --------------------
-let solids = [];      // Clean sculptures: cube / circle / triangle
-let particles = [];   // Atmosphere
-let connectors = [];  // Optional: elegant lines
+let solids = [];
+let particles = [];
 
 let maxSolids = 240;
-let maxParticles = 9000;
-let maxConnectors = 100;
+let maxParticles = 12000;
+
+// -------------------- MODE SYSTEM --------------------
+let activeMode = "cleanfield";
+let modeSwitchEveryMs = 5000;
+let nextModeSwitch = 0;
+
+const MODES = [
+  "cleanfield",    // pure minimal
+  "architecture",  // more cubes, aligned feeling
+  "orbital",       // circle drift ring
+  "synaptic",      // particles connect visually in behaviour
+  "storm",         // heavier flow
+  "bloom"          // brighter, more luminous
+];
 
 let lightPhase = 0;
 let globalSpin = 0;
-
-let activeMode = "cleanfield";
-let modeUntil = 0;
 
 // =====================================================
 // PRELOAD
@@ -70,6 +79,7 @@ function preload() {
 function setup() {
   createCanvas(windowWidth, windowHeight, WEBGL);
   colorMode(HSB, 360, 100, 100, 1);
+  noStroke();
 
   loadAllSoundsFromJSON();
 
@@ -78,11 +88,12 @@ function setup() {
   setInterval(fetchWeather, 120000);
   setInterval(fetchISS, 15000);
 
-  // base atmospheric particles always alive
-  for (let i = 0; i < 1600; i++) {
-    particles.push(new CleanParticle(null, 60, createVector(0,0,0)));
+  // background particles always alive
+  for (let i = 0; i < 1800; i++) {
+    particles.push(new CleanParticle(null, 60, createVector(0, 0, 0), "cleanfield"));
   }
 
+  // start button
   const btn = document.getElementById("startBtn");
   btn.addEventListener("click", async () => {
     await userStartAudio();
@@ -93,8 +104,11 @@ function setup() {
     attachUniversalPointerEvents();
 
     document.getElementById("overlay").style.display = "none";
-    setStatus("✅ Ready. Play MIDI / keyboard / touch. Clean field active.");
+    setStatus("✅ Ready. Modes evolving every 5s (no audio cut).");
   });
+
+  // schedule first switch
+  nextModeSwitch = millis() + modeSwitchEveryMs;
 }
 
 function setStatus(msg) {
@@ -185,12 +199,19 @@ function fadeOutAndStop(snd, seconds = 0.08) {
   if (!snd) return;
   snd.setVolume(0, seconds);
   setTimeout(() => {
-    try { snd.stop(); } catch(e) {}
+    try { snd.stop(); } catch (e) {}
   }, seconds * 1000 + 50);
 }
 
 function pickGroupForNote(note) {
   const isRight = note >= rightHandSplit;
+
+  // Mode affects sound palette slightly
+  if (activeMode === "storm") return "atmos";
+  if (activeMode === "bloom") return "shimmer";
+  if (activeMode === "orbital") return random() < 0.55 ? "glass" : "shimmer";
+
+  // Otherwise default logic
   const humidityBias = constrain(map(world.humidity, 0, 100, 0, 1), 0, 1);
   const issEnergy = constrain(map(world.issVel, 7600, 7800, 0, 1), 0, 1);
 
@@ -204,7 +225,7 @@ function pickGroupForNote(note) {
 }
 
 // =====================================================
-// INPUT EVENTS -> NOTE ON/OFF
+// NOTE ON / OFF
 // =====================================================
 function onNoteOn(note, vel) {
   if (!audioReady) return;
@@ -218,6 +239,7 @@ function onNoteOn(note, vel) {
   // play sound
   const group = pickGroupForNote(note);
   const voice = getAvailableVoice(group);
+
   if (voice) {
     const windBoost = map(world.wind, 0, 30, 0.9, 1.25);
     const amp = map(vel, 1, 127, 0.05, 0.22) * windBoost;
@@ -232,8 +254,8 @@ function onNoteOn(note, vel) {
     noteToVoice[note] = { sound: voice, group };
   }
 
-  spawnCleanSculpture(note, vel);
-  spawnParticleHalo(note, vel);
+  spawnGeometry(note, vel);
+  spawnParticles(note, vel);
 
   trimAll();
 }
@@ -244,15 +266,14 @@ function onNoteOff(note) {
   delete noteToVoice[note];
 }
 
+// =====================================================
+// SPAWN HELPERS
+// =====================================================
 function trimAll() {
   if (solids.length > maxSolids) solids.splice(0, solids.length - maxSolids);
   if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
-  if (connectors.length > maxConnectors) connectors.splice(0, connectors.length - maxConnectors);
 }
 
-// =====================================================
-// GEOMETRY SPAWNS (CLEAN)
-// =====================================================
 function issAnchorPoint() {
   const x = map(world.issLon, -180, 180, -260, 260);
   const y = map(world.issLat, -90, 90, -170, 170);
@@ -260,64 +281,84 @@ function issAnchorPoint() {
   return createVector(x, y, z);
 }
 
-function spawnCleanSculpture(note, vel) {
+function spawnGeometry(note, vel) {
   const anchor = issAnchorPoint();
 
-  // clean position: no jitter later, fixed at birth
+  // fixed position (no jitter later)
   const pos = anchor.copy().add(createVector(
     random(-240, 240),
     random(-180, 180),
     random(-180, 180)
   ));
 
-  // choose shape by pitch / surprise
-  const pick = (note + vel + floor(random(0, 3))) % 3;
-  const shape = pick === 0 ? "cube" : pick === 1 ? "circle" : "triangle";
+  // mode influences ratio
+  let pick;
+  if (activeMode === "architecture") pick = random() < 0.7 ? "cube" : random(["circle","triangle"]);
+  else if (activeMode === "orbital") pick = random() < 0.65 ? "circle" : random(["cube","triangle"]);
+  else if (activeMode === "synaptic") pick = random() < 0.45 ? "triangle" : random(["circle","cube"]);
+  else pick = random(["cube","circle","triangle"]);
 
-  solids.push(new CleanSolid(shape, pos, note, vel));
+  solids.push(new CleanSolid(pick, pos, note, vel, activeMode));
 }
 
-function spawnParticleHalo(note, vel) {
+function spawnParticles(note, vel) {
   const anchor = issAnchorPoint();
 
-  const count = floor(map(vel, 1, 127, 120, 520));
+  const baseCount = map(vel, 1, 127, 130, 650);
+  let count = floor(baseCount);
+
+  // mode amplification
+  if (activeMode === "storm") count *= 1.35;
+  if (activeMode === "synaptic") count *= 0.9;
+  if (activeMode === "cleanfield") count *= 0.7;
+
   for (let i = 0; i < count; i++) {
-    particles.push(new CleanParticle(note, vel, anchor));
+    particles.push(new CleanParticle(note, vel, anchor, activeMode));
   }
 }
 
 // =====================================================
-// CLEAN SOLID (NO VIBRATION, ONLY Z MOTION + SIZE LIFE)
+// GEOMETRIES (CLEAN LIFE BY SIZE + Z FORWARD/BACK)
 // =====================================================
 class CleanSolid {
-  constructor(shape, pos, note, vel) {
+  constructor(shape, pos, note, vel, mode) {
     this.shape = shape;
     this.pos = pos.copy();
     this.note = note;
     this.vel = vel;
+    this.mode = mode;
 
     this.birth = millis();
-    this.life = map(vel, 0, 127, 2000, 6500);
+    this.life = map(vel, 0, 127, 2200, 6800);
 
-    // no rotation jitter: fixed angles
+    // fixed rotation (no jitter)
     this.rot = createVector(
       map(note % 12, 0, 11, 0, PI),
       map((note + 3) % 12, 0, 11, 0, PI),
       map((vel + 7) % 12, 0, 11, 0, PI)
     );
 
-    // clean depth movement (forward/back)
-    this.zSpeed = map(world.wind, 0, 30, 0.18, 1.1) * random(0.7, 1.25);
+    // only Z movement forward/back
+    this.zSpeed = map(world.wind, 0, 30, 0.22, 1.0) * random(0.75, 1.2);
     this.zDir = random() < 0.5 ? 1 : -1;
 
-    // sizes: birth -> grow -> vanish
-    this.sizeMin = map(vel, 0, 127, 8, 22);
-    this.sizeMax = map(vel, 0, 127, 40, 140);
+    this.sizeMin = map(vel, 0, 127, 10, 22);
+    this.sizeMax = map(vel, 0, 127, 50, 160);
 
-    // color: weather + note
-    const humShift = map(world.humidity, 0, 100, 0, 40);
-    const tempShift = map(world.temperature, -10, 40, 180, 330);
-    this.hue = (map(note, 21, 108, 160, 360) + humShift + tempShift * 0.15) % 360;
+    // ✅ each shape gets unique hue at birth
+    let baseHue = random(0, 360);
+
+    let humShift = map(world.humidity, 0, 100, 0, 35);
+    let tempShift = map(world.temperature, -10, 40, 0, 55);
+    let issShift = map(world.issLon, -180, 180, -25, 25);
+
+    // mode coloring
+    if (mode === "storm") baseHue = (200 + random(-20, 20));
+    if (mode === "bloom") baseHue = (310 + random(-30, 30));
+    if (mode === "orbital") baseHue = (240 + random(-40, 40));
+    if (mode === "architecture") baseHue = (180 + random(-50, 50));
+
+    this.hue = (baseHue + humShift + tempShift + issShift) % 360;
   }
 
   isDead() {
@@ -334,14 +375,14 @@ class CleanSolid {
 
     this.size = lerp(this.sizeMin, this.sizeMax, ease);
 
-    // clean forward/back motion only on z
+    // forward/back only
     this.pos.z += this.zDir * this.zSpeed;
 
-    // if too far, reverse gently (gives oscillation without jitter)
+    // bounce softly
     if (this.pos.z > 520) this.zDir = -1;
     if (this.pos.z < -520) this.zDir = 1;
 
-    // alpha fades at end
+    // fade
     this.alpha = 1 - t;
   }
 
@@ -349,24 +390,21 @@ class CleanSolid {
     push();
     translate(this.pos.x, this.pos.y, this.pos.z);
 
-    // fixed, smooth rotation (no vibration)
     rotateX(this.rot.x);
     rotateY(this.rot.y);
     rotateZ(this.rot.z);
 
-    // glass-ish clean material
-    noStroke();
-    ambientMaterial(this.hue, 55, 95, this.alpha * 0.9);
-    specularMaterial(this.hue, 60, 100, this.alpha);
-    shininess(180);
+    // glossy clean
+    ambientMaterial(this.hue, 60, 95, this.alpha * 0.95);
+    specularMaterial(this.hue, 70, 100, this.alpha);
+    shininess(190);
 
     const s = this.size;
 
     if (this.shape === "cube") {
       box(s, s, s);
     } else if (this.shape === "circle") {
-      // circle plate in 3D (disc-like)
-      drawDisc(s * 0.8, s * 0.25);
+      drawDisc(s * 0.75, s * 0.25);
     } else if (this.shape === "triangle") {
       drawTrianglePlate(s * 0.9);
     }
@@ -375,7 +413,7 @@ class CleanSolid {
   }
 }
 
-// Disc in 3D
+// disc
 function drawDisc(radius, thickness) {
   push();
   rotateX(HALF_PI);
@@ -383,12 +421,11 @@ function drawDisc(radius, thickness) {
   pop();
 }
 
-// Triangle plate in 3D
+// triangle plate
 function drawTrianglePlate(sz) {
   beginShape(TRIANGLES);
-  const h = sz * 0.9;
 
-  // 2 layers (front/back) to look solid-ish
+  const h = sz * 0.9;
   const zFront = sz * 0.12;
   const zBack = -sz * 0.12;
 
@@ -400,24 +437,23 @@ function drawTrianglePlate(sz) {
   const v2b = createVector(-sz, h * 0.65, zBack);
   const v3b = createVector(sz, h * 0.65, zBack);
 
-  // front
   vertex(v1.x, v1.y, v1.z); vertex(v2.x, v2.y, v2.z); vertex(v3.x, v3.y, v3.z);
-  // back
   vertex(v1b.x, v1b.y, v1b.z); vertex(v3b.x, v3b.y, v3b.z); vertex(v2b.x, v2b.y, v2b.z);
 
   endShape();
 }
 
 // =====================================================
-// PARTICLES (ATMOSPHERE, LIGHTWEIGHT)
+// PARTICLES (LIGHTWEIGHT + MODE BEHAVIOUR)
 // =====================================================
 class CleanParticle {
-  constructor(note, vel, anchor = null) {
+  constructor(note, vel, anchor = null, mode = "cleanfield") {
     this.note = note;
     this.vel = vel || 60;
+    this.mode = mode;
 
     this.birth = millis();
-    this.life = note ? map(this.vel, 0, 127, 900, 2400) : random(3200, 8200);
+    this.life = note ? map(this.vel, 0, 127, 1000, 2600) : random(3200, 8200);
 
     const base = anchor ? anchor.copy() : createVector(0,0,0);
 
@@ -427,13 +463,15 @@ class CleanParticle {
       random(-520, 520)
     ));
 
-    // particles move, but soft
     const wind = map(world.wind, 0, 30, 0.2, 1.25);
     this.v = p5.Vector.random3D().mult(wind);
 
-    // color tuned to environment
+    // mode modifies particle drift
+    if (mode === "storm") this.v.mult(1.8);
+    if (mode === "orbital") this.v.mult(0.8);
+
     const cloudHue = map(world.cloud, 0, 100, 180, 320);
-    this.hue = (cloudHue + map(this.vel, 0, 127, 0, 90)) % 360;
+    this.hue = (cloudHue + random(-40, 40) + map(this.vel, 0, 127, 0, 90)) % 360;
 
     this.r = note ? map(this.vel, 0, 127, 1.2, 4.2) : random(1.0, 2.2);
   }
@@ -446,13 +484,20 @@ class CleanParticle {
     const t = constrain((millis() - this.birth) / this.life, 0, 1);
     this.alpha = (1 - t) * 0.65;
 
-    // soft drift
+    // drift
     this.pos.add(this.v);
 
-    // small wave to feel alive (but no jitter on solids)
-    this.pos.y += sin(frameCount * 0.01 + this.pos.x * 0.01) * 0.12;
+    // mode motion shaping
+    if (this.mode === "orbital") {
+      const a = frameCount * 0.01 + this.pos.x * 0.004;
+      this.pos.x += cos(a) * 0.25;
+      this.pos.z += sin(a) * 0.25;
+    } else if (this.mode === "synaptic") {
+      this.pos.y += sin(frameCount * 0.03 + this.pos.x * 0.01) * 0.35;
+    } else {
+      this.pos.y += sin(frameCount * 0.01 + this.pos.x * 0.01) * 0.12;
+    }
 
-    // damp
     this.v.mult(0.995);
   }
 
@@ -480,7 +525,7 @@ function setupMIDI() {
       const inputs = Array.from(midiAccess.inputs.values());
       inputs.forEach((input) => (input.onmidimessage = handleMIDI));
       midiReady = true;
-      setStatus("✅ MIDI connected. Clean sculptural field ON.");
+      setStatus("✅ MIDI connected. Modes shifting every 5 seconds.");
     },
     () => setStatus("⚠️ MIDI failed. Keyboard / touch works.")
   );
@@ -530,7 +575,7 @@ function attachUniversalPointerEvents() {
 
   c.addEventListener("pointerdown", (e) => {
     if (!audioReady) return;
-    try { c.setPointerCapture(e.pointerId); } catch(_) {}
+    try { c.setPointerCapture(e.pointerId); } catch (_) {}
 
     const note = random(randomNotesPool);
     const vel = floor(random(70, 120));
@@ -557,17 +602,24 @@ function attachUniversalPointerEvents() {
 }
 
 // =====================================================
-// DRAW LOOP (CLEAN, SPACE, LIGHT)
+// DRAW LOOP
 // =====================================================
 function draw() {
   background(0, 0.14);
 
-  // Lights (invisible, but affecting shapes)
+  // ✅ mode switching every 5s (NO reload, NO midi cut)
+  if (millis() > nextModeSwitch) {
+    activeMode = random(MODES);
+    nextModeSwitch = millis() + modeSwitchEveryMs;
+  }
+
+  // lighting
   lightPhase += 0.008 + map(world.wind, 0, 30, 0, 0.01);
   const dayAmp = world.isDay ? 1.0 : 0.55;
 
   ambientLight(12 * dayAmp);
 
+  // global directional lights
   directionalLight(
     (80 + 60 * sin(lightPhase)) * dayAmp,
     120 * dayAmp,
@@ -582,54 +634,67 @@ function draw() {
     0.7, 0.4, -1
   );
 
-  directionalLight(
-    140 * dayAmp,
-    255 * dayAmp,
-    (120 + 50 * sin(lightPhase * 0.9)) * dayAmp,
-    0.2, -0.8, -1
-  );
-
   // ISS point light
   const issX = map(world.issLon, -180, 180, -240, 240);
   const issY = map(world.issLat, -90, 90, -160, 160);
   pointLight(255 * dayAmp, 200 * dayAmp, 140 * dayAmp, issX, issY, 360);
 
-  // camera slow motion
+  // ✅ NEW: focus lights pointing to latest solids
+  let last = solids.slice(-6);
+  for (let i = 0; i < last.length; i++) {
+    let s = last[i];
+    if (!s) continue;
+
+    // focus light based on object hue (converted roughly to RGB feel)
+    pointLight(
+      255,
+      240,
+      200,
+      s.pos.x,
+      s.pos.y,
+      s.pos.z + 240
+    );
+  }
+
+  // camera drift
   const cloudSpin = map(world.cloud, 0, 100, 0.0009, 0.0018);
   globalSpin += cloudSpin;
 
   rotateY(globalSpin);
   rotateX(sin(frameCount * 0.001) * 0.08);
 
-  // particles (background energy)
+  // particles
   for (let p of particles) {
+    p.mode = activeMode; // particles adapt live to current mode
     p.update();
     p.draw();
   }
   particles = particles.filter(p => !p.isDead());
 
-  // solids (clean sculpture)
+  // solids
   for (let s of solids) {
     s.update();
     s.draw();
   }
   solids = solids.filter(s => !s.isDead());
 
-  // keep it alive
-  if (particles.length < 1400) {
-    particles.push(new CleanParticle(null, 60, createVector(0,0,0)));
+  // keep baseline atmosphere
+  if (particles.length < 1800) {
+    particles.push(new CleanParticle(null, 60, createVector(0, 0, 0), activeMode));
   }
 
-  // HUD small
+  // HUD
   push();
   resetMatrix();
   fill(255);
   textAlign(LEFT, TOP);
   textSize(12);
-  text("DUROME · Clean Sculptural Field 3.0 · Cubes / Circles / Triangles + Particles", 14, 14);
+  text("DUROME · Modular Clean Field · Cubes/Circles/Triangles + Particles", 14, 14);
+  text(`Mode: ${activeMode} (switch 5s) | Temp: ${world.temperature}°C Wind:${world.wind} Hum:${world.humidity}%`, 14, 32);
   pop();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
+
