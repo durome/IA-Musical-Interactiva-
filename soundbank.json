@@ -1,9 +1,7 @@
 {
   "atmos": [
     "atmos_01.mp3",
-    "atmos_02.mp3",
-    "atmos_03.mp3",
-    "atmos_04.mp3"
+    "atmos_02.mp3"
   ],
   "glass": [
     "glass_01.mp3",
@@ -15,6 +13,7 @@
     "shimmer_02.mp3"
   ]
 }
+
 
 
 
